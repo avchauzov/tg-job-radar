@@ -26,9 +26,10 @@ async def main():
 		cleaned_text = clean_text(job_description)
 		lines = iterate_lines(cleaned_text)
 		
-		for line in lines:
-			for length in range(MIN_NGRAM_LENGTH, MAX_NGRAM_LENGTH + 1):
-				keywords_subset = [key for key, value in KEYWORDS_LENGTH.items() if value == length]
+		for length in range(MIN_NGRAM_LENGTH, MAX_NGRAM_LENGTH + 1):
+			keywords_subset = [key for key, value in KEYWORDS_LENGTH.items() if value == length]
+			
+			for line in lines:
 				if ngram_search(line, keywords_subset, length):
 					print(message.text)
 					print()

@@ -9,8 +9,12 @@ nltk.download('punkt_tab')
 
 
 def clean_text(text):
-	text = re.sub(r'[^\w\s]', ' ', text)  # Remove all punctuation
-	text = re.sub(r'\s+', ' ', text)  # Replace multiple spaces with single space
+	# Remove URLs
+	text = re.sub(r'http\S+|www\S+|https\S+', '', text, flags=re.MULTILINE)
+	# Remove all punctuation except newlines
+	text = re.sub(r'[^\w\s\n]', ' ', text)
+	# Replace multiple spaces with a single space (excluding newlines)
+	text = re.sub(r'[^\S\n]+', ' ', text)
 	return text.strip().lower()
 
 
@@ -19,12 +23,8 @@ def iterate_lines(text):
 
 
 def ngram_search(line, keywords, n=1):
-	tokens = word_tokenize(line)
-	ngram_list = list(ngrams(tokens, n))
-	ngram_str_list = [' '.join(token) for token in ngram_list]
-	intersection = list(set(ngram_str_list) & set(keywords))
+	tokens = word_tokenize(line.strip())
+	ngram_list = [' '.join(ngram) for ngram in list(ngrams(tokens, n))]
+	intersection = set(ngram_list).intersection(keywords)
 	
-	if len(intersection) > 0:
-		return True
-	
-	return False
+	return len(intersection) > 0
