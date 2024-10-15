@@ -4,6 +4,8 @@
 	"data", "scientist", "machine", "learning", "engineer", "ai", "artificial", "intelligence", "nlp", "llm", "pytorch", "ml"
     ],
     
+    "data_collewction_batch_size": 32,
+    
     "my_meta": {
 	"location": "Currently based in Indonesia, planning to move to Vietnam in the next few months. Open to jobs in Southeast Asia or fully remote roles (from anywhere), with a willingness to relocate globally.",
 	"remote_status": "Prefer fully remote positions but open to hybrid or onsite roles if relocation assistance is provided.",

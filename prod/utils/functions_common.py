@@ -13,6 +13,27 @@ def setup_logging(file_name):
 	logging.getLogger().setLevel(logging.INFO)
 
 
+def setup_logging_async(file_name):
+	# Create a file handler with rotation
+	file_handler = RotatingFileHandler(f'{file_name}.log', maxBytes=10 * 1024 * 1024, backupCount=3)
+	file_handler.setLevel(logging.INFO)
+	
+	file_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+	file_handler.setFormatter(file_formatter)
+	
+	console_handler = logging.StreamHandler()
+	console_handler.setLevel(logging.INFO)
+	console_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+	console_handler.setFormatter(console_formatter)
+	
+	logger = logging.getLogger()
+	if not logger.hasHandlers():
+		logger.addHandler(file_handler)
+		logger.addHandler(console_handler)
+	
+	logger.setLevel(logging.INFO)
+
+
 async def get_channel_link_header(entity):
 	if hasattr(entity, 'username') and entity.username:
 		link_header = f'https://t.me/{entity.username}/'

@@ -4,12 +4,6 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from prod.utils.functions_common import setup_logging
-
-
-file_name = os.path.splitext(os.path.basename(__file__))[0]
-setup_logging(file_name)
-
 
 def get_correct_path(file_name):
 	load_dotenv()

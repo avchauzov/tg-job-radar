@@ -16,6 +16,8 @@ except FileNotFoundError as error:
 SOURCE_CHANNELS = CONFIG.get('source_channels', [])
 PREFILTERING_WORDS = CONFIG.get('prefiltering_words', [])
 
+DATA_COLLECTION_BATCH_SIZE = CONFIG.get('data_collewction_batch_size', 32)
+
 TG_CLIENT = TelegramClient(os.getenv('TG_SESSION_NAME'), os.getenv('TG_API_ID'), os.getenv('TG_API_HASH'))
 
 '''OPENAI_API_CLIENT = OpenAI(api_key=OPENAI_API_KEY)

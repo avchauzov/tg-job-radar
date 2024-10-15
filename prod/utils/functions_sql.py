@@ -1,15 +1,10 @@
 import logging
-import os
 
+import asyncpg
 import psycopg2
 from psycopg2.extras import execute_batch
 
-from prod.utils.functions_common import setup_logging
 from .. import POSTGRES_HOST, POSTGRES_NAME, POSTGRES_PASS, POSTGRES_USER
-
-
-file_name = os.path.splitext(os.path.basename(__file__))[0]
-setup_logging(file_name)
 
 
 def establish_db_connection():
@@ -25,7 +20,7 @@ def establish_db_connection():
 	
 	except Exception as error:
 		logging.error(f'Error connecting to the database: {error}')
-		return None
+		raise
 
 
 def batch_insert_to_db(table_name, columns, conflict, data):
@@ -65,6 +60,49 @@ def batch_insert_to_db(table_name, columns, conflict, data):
 		
 		if connection:
 			connection.rollback()
+
+
+async def batch_insert_to_db_async(table_name, columns, conflict, data):
+	try:
+		if not data:
+			logging.warning('No data provided for insertion.')
+			return
+		
+		columns_str = ', '.join(f'"{column}"' if column.isdigit() else column for column in columns)
+		conflict_str = ', '.join(f'"{column}"' if column.isdigit() else column for column in conflict)
+		columns_types = ', '.join(['$' + str(i) for i in range(1, len(columns) + 1)])
+		
+		db_insert_query = f'''
+            INSERT INTO {table_name} ({columns_str})
+            VALUES ({columns_types})
+        '''
+		
+		if conflict:
+			db_insert_query += f' ON CONFLICT ({conflict_str}) DO NOTHING'
+		
+		db_insert_query += ';'
+		
+		if isinstance(data[0], dict):
+			data_tuples = [tuple(detail.get(column) for column in columns) for detail in data]
+		
+		else:
+			data_tuples = data
+		
+		connection = await asyncpg.connect(
+				user=POSTGRES_USER, password=POSTGRES_PASS,
+				database=POSTGRES_NAME, host=POSTGRES_HOST
+				)
+		try:
+			async with connection.transaction():
+				await connection.executemany(db_insert_query, data_tuples)
+			
+			logging.info(f'Successfully inserted {len(data_tuples)} rows into {table_name}')
+		
+		finally:
+			await connection.close()
+	
+	except Exception as error:
+		logging.error(f'Error inserting data: {error}')
 
 
 def fetch_from_db(table_name, select_condition='', where_condition='', order_condition=''):
