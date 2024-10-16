@@ -34,3 +34,5 @@ with DAG(
 			python_callable=scrape_tg_function,
 			provide_context=True
 			)
+	
+	scrape_tg_operator
