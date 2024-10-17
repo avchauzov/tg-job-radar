@@ -16,6 +16,6 @@ OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 
 RAW_DATA__TG_POSTS_NAME = 'raw_data.tg_posts'
 RAW_DATA__TG_POSTS_CONFLICT = ['id', 'channel']
-RAW_DATA__TG_POSTS_COLUMNS = ['id', 'channel', 'post', 'date', 'created_at', 'post_link', 'links']
+RAW_DATA__TG_POSTS_COLUMNS = ['id', 'channel', 'post', 'date', 'created_at', 'post_link', 'urls', 'emails', 'tg_links']
 
 DATE_FORMAT = '%Y-%m-%d %H:%M:%S'

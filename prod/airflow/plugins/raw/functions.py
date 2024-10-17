@@ -1,5 +1,7 @@
 import sys
 
+from prod.utils.functions_common import normalize_url
+
 
 sys.path.insert(0, '/home/job_search')
 
@@ -23,17 +25,21 @@ def contains_job_keywords(text):
 
 def extract_links(text):
 	try:
-		url_pattern = r'(https?://[^\s]+)'
+		url_pattern = r'https?://[^\s()]+(?:\([\w\d]+\)|[^\s,()])*(?<![.,?!])'
 		email_pattern = r'[\w\.-]+@[\w\.-]+\.\w+'
 		telegram_pattern = r'@[\w_]+'
 		
-		links = re.findall(url_pattern, text)
-		emails = re.findall(email_pattern, text)
-		telegram_channels = re.findall(telegram_pattern, text)
+		urls = list(set(re.findall(url_pattern, text)))
+		urls = [normalize_url(url) for url in urls]
 		
-		all_links = links + emails + telegram_channels
-		return sorted(set(all_links))
+		results = {
+				'urls'    : list(set(urls)),
+				'emails'  : list(set(re.findall(email_pattern, text))),
+				'tg_links': list(set(re.findall(telegram_pattern, text)))
+				}
+		
+		return results
 	
 	except Exception as error:
 		logging.error(f'Error in extract_links: {error}')
-		return ()
+		return {'urls': None, 'emails': None, 'tg_links': None}

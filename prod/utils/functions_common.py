@@ -1,5 +1,6 @@
 import logging
 from logging.handlers import RotatingFileHandler
+from urllib.parse import urlparse, urlunparse
 
 
 def setup_logging(file_name):
@@ -21,6 +22,20 @@ def get_channel_link_header(entity):
 		link_header = f'https://t.me/c/{entity.id}/'
 	
 	return link_header
+
+
+def normalize_url(url):
+	parsed_url = urlparse(url)
+	normalized_path = parsed_url.path.lstrip('/').rstrip('/')
+	normalized_url = urlunparse(
+			parsed_url._replace(
+					scheme=parsed_url.scheme.lower(),
+					netloc=parsed_url.netloc.lower(),
+					path=normalized_path
+					)
+			)
+	
+	return normalized_url
 
 
 '''def get_html(url):

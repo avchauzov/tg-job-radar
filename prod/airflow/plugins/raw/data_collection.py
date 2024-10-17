@@ -71,9 +71,8 @@ def scrape_tg_function(tg_client):
 						'date'      : date if isinstance(date, datetime.datetime) else None,
 						'created_at': datetime.datetime.utcnow(),
 						'post_link' : message_link,
-						'links'     : links
 						}
-				
+				result.update(links)
 				results.append(result)
 				
 				if len(results) == DATA_COLLECTION_BATCH_SIZE:
