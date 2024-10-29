@@ -3,9 +3,11 @@ import logging
 import os
 import sys
 
+import openai
 from telethon.sessions import StringSession
 from telethon.sync import TelegramClient
 
+from prod import OPENAI_API_KEY
 from prod.lib.utils import get_correct_path
 
 
@@ -49,6 +51,8 @@ if not TG_STRING_SESSION:
 		sys.exit(0)
 
 TG_CLIENT = TelegramClient(StringSession(TG_STRING_SESSION), TG_API_ID, TG_API_HASH)
+
+OPENAI_CLIENT = openai.OpenAI(api_key=OPENAI_API_KEY)
 
 """OPENAI_API_CLIENT = OpenAI(api_key=OPENAI_API_KEY)
 

@@ -23,23 +23,14 @@ def contains_job_keywords(text):
 		return False
 
 
-def extract_links(text):
+def extract_urls(text):
 	try:
 		url_pattern = r'https?://[^\s()]+(?:\([\w\d]+\)|[^\s,()])*(?<![.,?!])'
-		email_pattern = r'[\w\.-]+@[\w\.-]+\.\w+'
-		telegram_pattern = r'@[\w_]+'
-		
 		urls = list(set(re.findall(url_pattern, text)))
 		urls = [normalize_url(url) for url in urls]
 		
-		results = {
-				'urls'    : list(set(urls)),
-				'emails'  : list(set(re.findall(email_pattern, text))),
-				'tg_links': list(set(re.findall(telegram_pattern, text)))
-				}
-		
-		return results
+		return sorted(list(set(urls)))
 	
 	except Exception as error:
 		logging.error(f'Error in extract_links: {error}')
-		return {'urls': None, 'emails': None, 'tg_links': None}
+		return []
