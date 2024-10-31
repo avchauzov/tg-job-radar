@@ -29,7 +29,7 @@ def filter_job_urls(description, url_list, max_retries=3, sleep_time=10):
 											'Ensure the output order matches the input URL order.')
 									},
 							{'role': 'user', 'content': f'Job post: {description}\n\nURLs:\n{url_list}'}
-							],
+							], temperature=0.0,
 					response_format=JobURLResult
 					)
 			

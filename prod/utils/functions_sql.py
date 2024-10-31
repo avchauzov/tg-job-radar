@@ -61,7 +61,7 @@ def batch_insert_to_db(table_name, columns, conflict, data):
 			connection.rollback()
 
 
-def fetch_from_db(table_name, select_condition='', where_condition='', order_condition=''):
+def fetch_from_db(table_name, select_condition='', where_condition='', group_by_condition='', order_condition=''):
 	try:
 		select_query = f'SELECT * FROM {table_name}'
 		
@@ -70,6 +70,9 @@ def fetch_from_db(table_name, select_condition='', where_condition='', order_con
 		
 		if where_condition:
 			select_query += f' WHERE {where_condition}'
+		
+		if group_by_condition:
+			select_query += f' GROUP BY {group_by_condition}'
 		
 		if order_condition:
 			select_query += f' ORDER BY {order_condition}'

@@ -8,7 +8,7 @@ import logging
 import os
 
 from prod import RAW_DATA__TG_POSTS_COLUMNS, RAW_DATA__TG_POSTS_CONFLICT, RAW_DATA__TG_POSTS_NAME
-from prod.airflow.plugins.raw.functions import contains_job_keywords
+from prod.airflow.plugins.raw.functions import contains_job_keywords, extract_urls
 from prod.config.config import DATA_COLLECTION_BATCH_SIZE, SOURCE_CHANNELS, TG_CLIENT
 from prod.utils.functions_common import get_channel_link_header, setup_logging
 from prod.utils.functions_sql import batch_insert_to_db, fetch_from_db
@@ -19,7 +19,7 @@ file_name = os.path.splitext(os.path.basename(__file__))[0]
 setup_logging(file_name)
 
 
-def scrape_tg():
+def scrape_tg(tg_client):
 	with TG_CLIENT as tg_client:
 		logging.info('Started scraping process.')
 		
@@ -60,6 +60,9 @@ def scrape_tg():
 						logging.info(f'Skipping message (no keywords) in channel: {channel}. Content: {job_description_cleaned[:256]}')
 						continue
 					
+					urls = extract_urls(job_description_cleaned)
+					logging.info(f'Extracted urls: {urls} from message ID: {message.id} in channel: {channel}')
+					
 					result = {
 							'id'        : int(message.id),
 							'channel'   : channel,
@@ -67,6 +70,7 @@ def scrape_tg():
 							'date'      : date if isinstance(date, datetime.datetime) else None,
 							'created_at': datetime.datetime.utcnow(),
 							'post_link' : message_link,
+							'urls'      : urls,
 							}
 					
 					results.append(result)
@@ -93,4 +97,5 @@ def scrape_tg():
 
 
 if __name__ == '__main__':
-	scrape_tg()
+	with TG_CLIENT as tg_client:
+		scrape_tg(tg_client)
