@@ -1,4 +1,5 @@
 import logging
+import time
 
 import psycopg2
 from psycopg2.extras import execute_batch
@@ -61,7 +62,7 @@ def batch_insert_to_db(table_name, columns, conflict, data):
 			connection.rollback()
 
 
-def fetch_from_db(table_name, select_condition='', where_condition='', group_by_condition='', order_condition=''):
+def fetch_from_db(table_name, select_condition='', where_condition='', group_by_condition='', order_by_condition=''):
 	try:
 		select_query = f'SELECT * FROM {table_name}'
 		
@@ -74,8 +75,8 @@ def fetch_from_db(table_name, select_condition='', where_condition='', group_by_
 		if group_by_condition:
 			select_query += f' GROUP BY {group_by_condition}'
 		
-		if order_condition:
-			select_query += f' ORDER BY {order_condition}'
+		if order_by_condition:
+			select_query += f' ORDER BY {order_by_condition}'
 		
 		select_query += ';'
 		
@@ -97,4 +98,62 @@ def fetch_from_db(table_name, select_condition='', where_condition='', group_by_
 	
 	except Exception as error:
 		logging.error(f'Error selecting data from {table_name}: {error}')
+		raise
+
+
+def get_table_columns(table_name):
+	try:
+		table_schema, table_name = table_name.split('.')
+		
+		with establish_db_connection() as connection:
+			with connection.cursor() as cursor:
+				query = """
+	            select column_name
+	            from information_schema.columns
+	            where table_schema = %s and table_name = %s
+	            """
+				
+				cursor.execute(query, (table_schema, table_name,))
+				columns = [row[0] for row in cursor.fetchall()]
+				return columns
+	
+	except Exception as error:
+		logging.error(f'Error fetching columns for table {table_name}: {error}')
+		return None
+
+
+def move_data_with_condition(source_table, target_table, select_condition='', where_condition=''):
+	try:
+		select_query = f'SELECT {select_condition} FROM {source_table} WHERE {where_condition};'
+		logging.info(f'Executing select query: {select_query}')
+		
+		with establish_db_connection() as connection:
+			with connection.cursor() as cursor:
+				start_time = time.time()
+				cursor.execute(select_query)
+				data_to_move = cursor.fetchall()
+				fetch_time = time.time() - start_time
+				logging.info(f'Data fetched in {fetch_time:.2f} seconds.')
+				
+				if not data_to_move:
+					logging.info('No data to move based on the condition.')
+					return
+				
+				column_names = [desc[0] for desc in cursor.description]
+				
+				placeholders = ', '.join(['%s'] * len(column_names))
+				insert_query = f'INSERT INTO {target_table} ({", ".join(column_names)}) VALUES ({placeholders})'
+				
+				logging.info(f'Inserting {len(data_to_move)} records into {target_table}.')
+				
+				start_time = time.time()
+				cursor.executemany(insert_query, data_to_move)
+				insert_time = time.time() - start_time
+				logging.info(f'Data inserted in {insert_time:.2f} seconds.')
+				
+				connection.commit()
+				logging.info(f'{len(data_to_move)} records successfully moved from {source_table} to {target_table}.')
+	
+	except Exception as error:
+		logging.error(f'Error moving data from {source_table} to {target_table}: {error}')
 		raise

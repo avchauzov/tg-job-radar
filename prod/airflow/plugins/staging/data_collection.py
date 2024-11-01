@@ -7,7 +7,7 @@ import datetime
 import logging
 import os
 
-from prod import RAW_DATA__TG_POSTS_COLUMNS, RAW_DATA__TG_POSTS_CONFLICT, RAW_DATA__TG_POSTS_NAME
+from prod import RAW_DATA__TG_POSTS_COLUMNS, RAW_DATA__TG_POSTS__CONFLICT, RAW_DATA__TG_POSTS__NAME
 from prod.airflow.plugins.raw.functions import contains_job_keywords, extract_urls
 from prod.config.config import DATA_COLLECTION_BATCH_SIZE, SOURCE_CHANNELS, TG_CLIENT
 from prod.utils.functions_common import get_channel_link_header, setup_logging
@@ -23,7 +23,7 @@ def scrape_tg(tg_client):
 	with TG_CLIENT as tg_client:
 		logging.info('Started scraping process.')
 		
-		_, last_date = fetch_from_db(RAW_DATA__TG_POSTS_NAME, 'channel, max(date) as date', group_by_condition='channel', order_condition='date desc')
+		_, last_date = fetch_from_db(RAW_DATA__TG_POSTS__NAME, 'channel, max(date) as date', group_by_condition='channel', order_by_condition='date desc')
 		last_date_dict = dict(last_date)
 		
 		for channel in SOURCE_CHANNELS:
@@ -76,14 +76,14 @@ def scrape_tg(tg_client):
 					results.append(result)
 					
 					if len(results) == DATA_COLLECTION_BATCH_SIZE:
-						batch_insert_to_db(RAW_DATA__TG_POSTS_NAME, RAW_DATA__TG_POSTS_COLUMNS, RAW_DATA__TG_POSTS_CONFLICT, results)
+						batch_insert_to_db(RAW_DATA__TG_POSTS__NAME, RAW_DATA__TG_POSTS_COLUMNS, RAW_DATA__TG_POSTS__CONFLICT, results)
 						logging.info(f'Inserting batch of {len(results)} messages into database.')
 						
 						results_count += len(results)
 						results = []
 				
 				if results:
-					batch_insert_to_db(RAW_DATA__TG_POSTS_NAME, RAW_DATA__TG_POSTS_COLUMNS, RAW_DATA__TG_POSTS_CONFLICT, results)
+					batch_insert_to_db(RAW_DATA__TG_POSTS__NAME, RAW_DATA__TG_POSTS_COLUMNS, RAW_DATA__TG_POSTS__CONFLICT, results)
 					logging.info(f'Inserting batch of {len(results)} messages into database.')
 					
 					results_count += len(results)

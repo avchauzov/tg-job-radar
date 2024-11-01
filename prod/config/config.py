@@ -7,8 +7,9 @@ import openai
 from telethon.sessions import StringSession
 from telethon.sync import TelegramClient
 
-from prod import OPENAI_API_KEY
+from prod import OPENAI_API_KEY, RAW_DATA__TG_POSTS__NAME
 from prod.lib.utils import get_correct_path
+from prod.utils.functions_sql import get_table_columns
 
 
 config_path = get_correct_path('config/config.json')
@@ -53,6 +54,8 @@ if not TG_STRING_SESSION:
 TG_CLIENT = TelegramClient(StringSession(TG_STRING_SESSION), TG_API_ID, TG_API_HASH)
 
 OPENAI_CLIENT = openai.OpenAI(api_key=OPENAI_API_KEY)
+
+RAW_DATA__TG_POSTS_COLUMNS = get_table_columns(RAW_DATA__TG_POSTS__NAME)
 
 """OPENAI_API_CLIENT = OpenAI(api_key=OPENAI_API_KEY)
 
