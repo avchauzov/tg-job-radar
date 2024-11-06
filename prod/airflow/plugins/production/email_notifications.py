@@ -1,6 +1,11 @@
+import smtplib
 import sys
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 
-from prod import PROD_DATA__JOBS__NAME, PROD_DATA__JOBS__ORDER_BY_CONDITION, PROD_DATA__JOBS__SELECT_CONDITION, PROD_DATA__JOBS__WHERE_CONDITION, RAW_DATA__TG_POSTS__NAME, RAW_DATA_TO_PROD_DATA_SELECT_CONDITION, RAW_DATA_TO_PROD_DATA_WHERE_CONDITION
+import pandas as pd
+
+from prod import GMAIL_APP_PASSWORD, PROD_DATA__JOBS__NAME, PROD_DATA__JOBS__ORDER_BY_CONDITION, PROD_DATA__JOBS__SELECT_CONDITION, PROD_DATA__JOBS__WHERE_CONDITION, RAW_DATA__TG_POSTS__NAME, RAW_DATA_TO_PROD_DATA_SELECT_CONDITION, RAW_DATA_TO_PROD_DATA_WHERE_CONDITION, RECIPIENT_EMAIL, SENDER_EMAIL
 from prod.utils.functions_sql import fetch_from_db, move_data_with_condition
 
 
@@ -19,69 +24,38 @@ def notify_me():
 	move_data_with_condition(RAW_DATA__TG_POSTS__NAME, PROD_DATA__JOBS__NAME, select_condition=RAW_DATA_TO_PROD_DATA_SELECT_CONDITION, where_condition=RAW_DATA_TO_PROD_DATA_WHERE_CONDITION)
 	columns, new_posts = fetch_from_db(PROD_DATA__JOBS__NAME, select_condition=PROD_DATA__JOBS__SELECT_CONDITION, where_condition=PROD_DATA__JOBS__WHERE_CONDITION, order_by_condition=PROD_DATA__JOBS__ORDER_BY_CONDITION)
 	
-	print(123)
+	df = pd.DataFrame(new_posts, columns=columns)
 	
-	# add to prod_data.jobs all rows from raw_data.tg_posts that do not exist in prod_data.jobs (matching by id)
-	# while doing this, new posts are added with mask 'notificated' = False
-	# then, iterated through every post with 'notificated' = False, wrap this post (columns post and post_link)
-	# and send it to my email
-	# aggregate several posts into one message using group by channel
-	# after that, put 'notificated' to True
+	message = MIMEMultipart('alternative')
+	message['Subject'] = 'TG Job Notifications'
+	message['From'] = SENDER_EMAIL
+	message['To'] = RECIPIENT_EMAIL
 	
-	'''
-	def send_email(posts_by_channel):
-	    sender_email = "your_email@example.com"
-	    receiver_email = "recipient@example.com"
-	    smtp_server = "smtp.example.com"
-	    smtp_port = 587
-	    smtp_user = "your_email@example.com"
-	    smtp_password = "your_password"
-	    
-	    message = MIMEMultipart("alternative")
-	    message["Subject"] = "New Job Notifications"
-	    message["From"] = sender_email
-	    message["To"] = receiver_email
+	index, email_content = 0, ''
+	for row in df.iterrows():
+		channel = row[1]['channel']
+		post = row[1]['post'].replace('\n', '<br>')
+		post_link = row[1]['post_link']
+		
+		email_content += f"<div style='margin-bottom: 10px;'>{post}<br><a href='{post_link}'>Link</a></div>"
+		if row[0] == len(df) - 1 or df.iloc[row[0] + 1]['channel'] != channel:
+			email_content += "</div><hr style='border: 1px solid #ccc; width: 80%; margin: 20px auto;'>"
+		
+		index += 1
+		if index > 10:
+			break
 	
-	    # Create the email content
-	    email_content = ""
-	    for channel, posts in posts_by_channel.items():
-	        email_content += f"<h3>Channel: {channel}</h3><ul>"
-	        for post in posts:
-	            email_content += f"<li>{post['post']} - <a href='{post['post_link']}'>Link</a></li>"
-	        email_content += "</ul><br>"
+	message.attach(MIMEText(email_content, 'html'))
 	
-	    message.attach(MIMEText(email_content, "html"))
+	try:
+		with smtplib.SMTP('smtp.gmail.com', 587) as server:
+			server.starttls()
+			server.login(SENDER_EMAIL, GMAIL_APP_PASSWORD)
+			server.sendmail(SENDER_EMAIL, RECIPIENT_EMAIL, message.as_string())
+			print('Email sent successfully!')
 	
-	    with smtplib.SMTP(smtp_server, smtp_port) as server:
-	        server.starttls()
-	        server.login(smtp_user, smtp_password)
-	        server.sendmail(sender_email, receiver_email, message.as_string())
-	
-	def update_notifications():
-	    # Mark notificated = True for sent notifications
-	    query = "UPDATE prod_data.jobs SET notificated = True WHERE notificated = False"
-	    with engine.connect() as conn:
-	        conn.execute(query)
-	
-	def notify_me():
-	    fetch_new_posts()
-	    
-	    unsent_posts = get_unsent_notifications()
-	    if not unsent_posts.empty:
-	        # Group posts by channel
-	        posts_by_channel = unsent_posts.groupby('channel')[['post', 'post_link']].apply(lambda x: x.to_dict('records')).to_dict()
-	        
-	        # Send email
-	        send_email(posts_by_channel)
-	        
-	        # Mark notifications as sent
-	        update_notifications()
-	
-	if __name__ == '__main__':
-	    notify_me()
-		'''
-	
-	pass
+	except Exception as error:
+		print(f'Failed to send email: {error}')
 
 
 if __name__ == '__main__':

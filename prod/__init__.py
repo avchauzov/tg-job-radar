@@ -29,3 +29,7 @@ PROD_DATA__JOBS__ORDER_BY_CONDITION = 'date asc, channel, post'
 
 DATE_FORMAT = '%Y-%m-%d %H:%M:%S'
 LLM_BASE_MODEL = 'gpt-4o-mini'
+
+SENDER_EMAIL = os.getenv('SENDER_EMAIL')
+RECIPIENT_EMAIL = os.getenv('RECIPIENT_EMAIL')
+GMAIL_APP_PASSWORD = os.getenv('GMAIL_APP_PASSWORD')
