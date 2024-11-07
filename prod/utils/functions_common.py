@@ -1,6 +1,10 @@
 import logging
+import os
 from logging.handlers import RotatingFileHandler
+from pathlib import Path
 from urllib.parse import urlparse, urlunparse
+
+from dotenv import load_dotenv
 
 
 def setup_logging(file_name):
@@ -10,32 +14,62 @@ def setup_logging(file_name):
 	formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 	handler.setFormatter(formatter)
 	
-	logging.getLogger().addHandler(handler)
-	logging.getLogger().setLevel(logging.INFO)
+	logger = logging.getLogger(__name__)
+	logger.setLevel(logging.INFO)
+	
+	if not logger.hasHandlers():
+		logger.addHandler(handler)
 
 
 def get_channel_link_header(entity):
 	if hasattr(entity, 'username') and entity.username:
-		link_header = f'https://t.me/{entity.username}/'
+		return f'https://t.me/{entity.username}/'
 	
-	else:
-		link_header = f'https://t.me/c/{entity.id}/'
+	elif hasattr(entity, 'id'):
+		return f'https://t.me/c/{entity.id}/'
 	
-	return link_header
+	logging.warning("Entity lacks 'username' and 'id' attributes")
+	return None
 
 
 def normalize_url(url):
-	parsed_url = urlparse(url)
-	normalized_path = parsed_url.path.lstrip('/').rstrip('/')
-	normalized_url = urlunparse(
-			parsed_url._replace(
-					scheme=parsed_url.scheme.lower(),
-					netloc=parsed_url.netloc.lower(),
-					path=normalized_path
-					)
-			)
+	try:
+		logging.info(f'Normalizing URL: {url}')
+		parsed_url = urlparse(url)
+		
+		normalized_path = parsed_url.path.lstrip('/').rstrip('/')
+		normalized_url = urlunparse(
+				parsed_url._replace(
+						scheme=parsed_url.scheme.lower(),
+						netloc=parsed_url.netloc.lower(),
+						path=normalized_path
+						)
+				)
+		
+		return normalized_url
 	
-	return normalized_url
+	except ValueError as error:
+		logging.warning(f'Invalid URL provided for normalization: {url} | Error: {error}')
+		return None
+
+
+def get_correct_path(file_name):
+	load_dotenv()
+	base_dir = os.getenv('CONFIG_BASE_DIR')
+	local_dir = os.getenv('CONFIG_BASE_LOCAL_DIR')
+	logging.info(f'Starting to resolve file path for: {file_name}')
+	
+	base_path = Path(base_dir).resolve() if base_dir else None
+	local_path = Path(local_dir).resolve() if local_dir else None
+	
+	for path in [base_path, local_path, Path(__file__).resolve().parent]:
+		if path and path.exists():
+			file_path = path / file_name
+			logging.info(f'File path resolved to: {file_path}')
+			return file_path
+	
+	logging.error(f'File not found at any checked path for {file_name}')
+	raise FileNotFoundError(f'File not found for {file_name}')
 
 
 '''def get_html(url):

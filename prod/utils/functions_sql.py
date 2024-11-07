@@ -1,13 +1,16 @@
 import logging
 import time
+from contextlib import contextmanager
 
 import psycopg2
-from psycopg2.extras import execute_batch
+from psycopg2.extras import execute_values
 
 from prod import POSTGRES_HOST, POSTGRES_NAME, POSTGRES_PASS, POSTGRES_USER
 
 
+@contextmanager
 def establish_db_connection():
+	connection = None
 	try:
 		connection = psycopg2.connect(
 				host=POSTGRES_HOST,
@@ -16,11 +19,21 @@ def establish_db_connection():
 				password=POSTGRES_PASS,
 				port=5432
 				)
-		return connection
+		
+		yield connection
 	
 	except Exception as error:
 		logging.error(f'Error connecting to the database: {error}')
+		
+		if connection:
+			connection.close()
+		
 		raise
+	
+	finally:
+		
+		if connection:
+			connection.close()
 
 
 def batch_insert_to_db(table_name, columns, conflict, data):
@@ -51,14 +64,14 @@ def batch_insert_to_db(table_name, columns, conflict, data):
 		
 		with establish_db_connection() as connection:
 			with connection.cursor() as cursor:
-				execute_batch(cursor, db_insert_query, data_tuples)
+				execute_values(cursor, db_insert_query, data_tuples)
 			
 			connection.commit()
 	
 	except Exception as error:
 		logging.error(f'Error inserting data: {error}')
 		
-		if connection:
+		if 'connection' in locals() and connection:
 			connection.rollback()
 
 
@@ -119,7 +132,7 @@ def get_table_columns(table_name):
 	
 	except Exception as error:
 		logging.error(f'Error fetching columns for table {table_name}: {error}')
-		return None
+		return []
 
 
 def move_data_with_condition(source_table, target_table, select_condition='', where_condition=''):
