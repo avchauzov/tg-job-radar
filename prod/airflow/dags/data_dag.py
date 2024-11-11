@@ -13,7 +13,7 @@ from airflow.operators.python_operator import PythonOperator
 default_args = {
 		'owner'          : 'avchauzov',
 		'depends_on_past': False,
-		'start_date'     : datetime(2023, 1, 1),
+		'start_date'     : datetime(2024, 1, 1),
 		'retries'        : 3,
 		'retry_delay'    : timedelta(minutes=5),
 		}

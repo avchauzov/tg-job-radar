@@ -8,7 +8,7 @@ import logging
 import os
 
 from prod import RAW_DATA__TG_POSTS_COLUMNS, RAW_DATA__TG_POSTS__CONFLICT, RAW_DATA__TG_POSTS__NAME
-from prod.airflow.plugins.raw.functions import contains_job_keywords, extract_urls
+from prod.airflow.plugins.raw.utils_text import contains_job_keywords, extract_urls
 from prod.config.config import DATA_COLLECTION_BATCH_SIZE, SOURCE_CHANNELS, TG_CLIENT
 from prod.utils.functions_common import get_channel_link_header, setup_logging
 from prod.utils.functions_sql import batch_insert_to_db, fetch_from_db

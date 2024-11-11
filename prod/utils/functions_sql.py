@@ -3,7 +3,7 @@ import time
 from contextlib import contextmanager
 
 import psycopg2
-from psycopg2.extras import execute_values
+from psycopg2.extras import execute_batch
 
 from prod import POSTGRES_HOST, POSTGRES_NAME, POSTGRES_PASS, POSTGRES_USER
 
@@ -64,7 +64,7 @@ def batch_insert_to_db(table_name, columns, conflict, data):
 		
 		with establish_db_connection() as connection:
 			with connection.cursor() as cursor:
-				execute_values(cursor, db_insert_query, data_tuples)
+				execute_batch(cursor, db_insert_query, data_tuples)
 			
 			connection.commit()
 	
@@ -114,7 +114,7 @@ def fetch_from_db(table_name, select_condition='', where_condition='', group_by_
 		raise
 
 
-def get_table_columns(table_name):
+def get_table_columns(table_name, to_exclude=[]):
 	try:
 		table_schema, table_name = table_name.split('.')
 		
@@ -127,7 +127,7 @@ def get_table_columns(table_name):
 	            """
 				
 				cursor.execute(query, (table_schema, table_name,))
-				columns = [row[0] for row in cursor.fetchall()]
+				columns = [row[0] for row in cursor.fetchall() if row[0] not in to_exclude]
 				return columns
 	
 	except Exception as error:
