@@ -52,7 +52,7 @@ if not TG_STRING_SESSION:
 
 TG_CLIENT = TelegramClient(StringSession(TG_STRING_SESSION), TG_API_ID, TG_API_HASH)
 
-RAW_DATA__TG_POSTS__COLUMNS = get_table_columns(RAW_DATA__TG_POSTS__NAME, to_exclude=['id'])
+RAW_DATA__TG_POSTS__COLUMNS = get_table_columns(RAW_DATA__TG_POSTS__NAME, to_exclude=[])
 
 """OPENAI_API_CLIENT = OpenAI(api_key=OPENAI_API_KEY)
 

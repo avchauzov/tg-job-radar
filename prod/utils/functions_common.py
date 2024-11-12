@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import os
 from logging.handlers import RotatingFileHandler
@@ -70,6 +71,11 @@ def get_correct_path(file_name):
 	
 	logging.error(f'File not found at any checked path for {file_name}')
 	raise FileNotFoundError(f'File not found for {file_name}')
+
+
+def generate_hash(input_string):
+	hash_object = hashlib.sha256(input_string.encode())
+	return hash_object.hexdigest()
 
 
 '''def get_html(url):

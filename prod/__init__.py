@@ -19,7 +19,7 @@ RECIPIENT_EMAIL = os.getenv('RECIPIENT_EMAIL')
 GMAIL_APP_PASSWORD = os.getenv('GMAIL_APP_PASSWORD')
 
 RAW_DATA__TG_POSTS__NAME = 'raw_data.tg_posts'
-RAW_DATA__TG_POSTS__CONFLICT = ['post_link']
+RAW_DATA__TG_POSTS__CONFLICT = ['id']
 
 PROD_DATA__JOBS__NAME = 'prod_data.jobs'
 PROD_DATA__JOBS__CONFLICT = []

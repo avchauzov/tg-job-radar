@@ -10,7 +10,7 @@ import os
 from prod import RAW_DATA__TG_POSTS__CONFLICT, RAW_DATA__TG_POSTS__NAME
 from prod.airflow.plugins.raw.utils_text import contains_job_keywords
 from prod.config.config import DATA_COLLECTION_BATCH_SIZE, RAW_DATA__TG_POSTS__COLUMNS, SOURCE_CHANNELS, TG_CLIENT
-from prod.utils.functions_common import get_channel_link_header, setup_logging
+from prod.utils.functions_common import generate_hash, get_channel_link_header, setup_logging
 from prod.utils.functions_sql import batch_insert_to_db, fetch_from_db
 from prod.utils.functions_text import clean_job_description
 
@@ -53,7 +53,7 @@ def scrape_tg():
 					if isinstance(date, datetime.datetime) and date.tzinfo is not None:
 						date = date.astimezone(datetime.timezone.utc).replace(tzinfo=None)
 					
-					message_link = f'{link_header}{message.id}'
+					message_link = f'{link_header}{message.id}'.lower().strip()
 					job_description_cleaned = clean_job_description(job_description)
 					
 					if not contains_job_keywords(job_description_cleaned):
@@ -61,7 +61,7 @@ def scrape_tg():
 						continue
 					
 					result = {
-							# 'id'        : int(message.id),
+							'id'        : generate_hash(message_link),
 							'channel'   : channel,
 							'post'      : job_description,
 							'date'      : date if isinstance(date, datetime.datetime) else None,
