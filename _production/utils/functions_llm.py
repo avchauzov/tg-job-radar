@@ -3,8 +3,8 @@ import time
 
 from pydantic import BaseModel
 
-from prod import LLM_BASE_MODEL
-from prod.config.config import OPENAI_CLIENT
+from _production import LLM_BASE_MODEL
+from _production.config.config import OPENAI_CLIENT
 
 
 class JobURLResult(BaseModel):

@@ -5,7 +5,7 @@ from contextlib import contextmanager
 import psycopg2
 from psycopg2.extras import execute_batch
 
-from prod import POSTGRES_HOST, POSTGRES_NAME, POSTGRES_PASS, POSTGRES_USER
+from _production import POSTGRES_HOST, POSTGRES_NAME, POSTGRES_PASS, POSTGRES_USER
 
 
 @contextmanager

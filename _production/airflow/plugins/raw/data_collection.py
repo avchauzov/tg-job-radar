@@ -7,12 +7,12 @@ import datetime
 import logging
 import os
 
-from prod import RAW_DATA__TG_POSTS__CONFLICT, RAW_DATA__TG_POSTS__NAME
-from prod.airflow.plugins.raw.utils_text import contains_job_keywords
-from prod.config.config import DATA_COLLECTION_BATCH_SIZE, RAW_DATA__TG_POSTS__COLUMNS, SOURCE_CHANNELS, TG_CLIENT
-from prod.utils.functions_common import generate_hash, get_channel_link_header, setup_logging
-from prod.utils.functions_sql import batch_insert_to_db, fetch_from_db
-from prod.utils.functions_text import clean_job_description
+from _production import RAW_DATA__TG_POSTS__CONFLICT, RAW_DATA__TG_POSTS__NAME
+from _production.airflow.plugins.raw.text_processing import contains_job_keywords
+from _production.config.config import DATA_COLLECTION_BATCH_SIZE, RAW_DATA__TG_POSTS__COLUMNS, SOURCE_CHANNELS, TG_CLIENT
+from _production.utils.functions_common import generate_hash, get_channel_link_header, setup_logging
+from _production.utils.functions_sql import batch_insert_to_db, fetch_from_db
+from _production.utils.functions_text import clean_job_description
 
 
 file_name = os.path.splitext(os.path.basename(__file__))[0]

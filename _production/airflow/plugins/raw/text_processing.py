@@ -1,8 +1,8 @@
 import logging
 import re
 
-from prod.config.config import PREFILTERING_WORDS
-from prod.utils.functions_common import normalize_url
+from _production.config.config import PREFILTERING_WORDS
+from _production.utils.functions_common import normalize_url
 
 
 URL_PATTERN = r'https?://[^\s()]+(?:\([\w\d]+\)|[^\s,()])*(?<![.,?!])'

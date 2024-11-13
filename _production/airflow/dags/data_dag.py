@@ -3,7 +3,8 @@ import sys
 
 sys.path.insert(0, '/home/job_search')
 
-from prod.airflow.plugins.raw.data_collection import scrape_tg
+from _production.airflow.plugins.raw.data_collection import scrape_tg
+from _production.airflow.plugins.staging.data_cleaning import clean_and_move_data
 from datetime import datetime, timedelta
 
 from airflow import DAG
@@ -29,10 +30,20 @@ with DAG(
 		scrape_tg()
 	
 	
+	def clean_and_move_data_function(**kwargs):
+		clean_and_move_data()
+	
+	
 	scrape_tg_operator = PythonOperator(
 			task_id='scrape_tg_function',
 			python_callable=scrape_tg_function,
 			provide_context=True
 			)
 	
-	scrape_tg_operator
+	clean_and_move_data_operator = PythonOperator(
+			task_id='clean_and_move_data_function',
+			python_callable=clean_and_move_data_function,
+			provide_context=True
+			)
+	
+	scrape_tg_operator >> clean_and_move_data_operator

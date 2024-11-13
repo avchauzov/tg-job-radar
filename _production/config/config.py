@@ -7,10 +7,10 @@ import openai
 from telethon.sessions import StringSession
 from telethon.sync import TelegramClient
 
-from prod import OPENAI_API_KEY, RAW_DATA__TG_POSTS__NAME
-from prod.utils.functions_common import get_correct_path, setup_logging
-from prod.utils.functions_sql import get_table_columns
-from prod.utils.functions_tg_api import create_session_string
+from _production import OPENAI_API_KEY, RAW_DATA__TG_POSTS__NAME, STAGING_DATA__JOBS__NAME
+from _production.utils.functions_common import get_correct_path, setup_logging
+from _production.utils.functions_sql import get_table_columns
+from _production.utils.functions_tg_api import create_session_string
 
 
 file_name = os.path.splitext(os.path.basename(__file__))[0]
@@ -53,6 +53,9 @@ if not TG_STRING_SESSION:
 TG_CLIENT = TelegramClient(StringSession(TG_STRING_SESSION), TG_API_ID, TG_API_HASH)
 
 RAW_DATA__TG_POSTS__COLUMNS = get_table_columns(RAW_DATA__TG_POSTS__NAME, to_exclude=[])
+
+STAGING_DATA__JOBS__COLUMNS = get_table_columns(STAGING_DATA__JOBS__NAME, to_exclude=[])
+RAW_DATA_TO_STAGING_DATA__SELECT_CONDITION = ', '.join(STAGING_DATA__JOBS__COLUMNS)
 
 """OPENAI_API_CLIENT = OpenAI(api_key=OPENAI_API_KEY)
 

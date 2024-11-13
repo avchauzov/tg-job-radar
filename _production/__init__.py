@@ -21,15 +21,14 @@ GMAIL_APP_PASSWORD = os.getenv('GMAIL_APP_PASSWORD')
 RAW_DATA__TG_POSTS__NAME = 'raw_data.tg_posts'
 RAW_DATA__TG_POSTS__CONFLICT = ['id']
 
+STAGING_DATA__JOBS__NAME = 'staging_data.posts'
+RAW_DATA_TO_STAGING_DATA__WHERE_CONDITION = f'id not in (select id from {STAGING_DATA__JOBS__NAME})'
+
 PROD_DATA__JOBS__NAME = 'prod_data.jobs'
-PROD_DATA__JOBS__CONFLICT = []
 
 PROD_DATA__JOBS__SELECT_CONDITION = 'channel, post, post_link'
 PROD_DATA__JOBS__WHERE_CONDITION = 'notificated = false'
 PROD_DATA__JOBS__ORDER_BY_CONDITION = 'date asc, channel, post'
-
-RAW_DATA_TO_PROD_DATA__SELECT_CONDITION = '*'
-RAW_DATA_TO_PROD_DATA__WHERE_CONDITION = f'(id, channel) not in (select id, channel from {PROD_DATA__JOBS__NAME})'
 
 DATE_FORMAT = '%Y-%m-%d %H:%M:%S'
 LLM_BASE_MODEL = 'gpt-4o-mini'
