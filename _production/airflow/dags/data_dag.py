@@ -5,6 +5,8 @@ sys.path.insert(0, '/home/job_search')
 
 from _production.airflow.plugins.raw.data_collection import scrape_tg
 from _production.airflow.plugins.staging.data_cleaning import clean_and_move_data
+from _production.airflow.plugins.production.email_notifications import notify_me
+
 from datetime import datetime, timedelta
 
 from airflow import DAG
@@ -34,6 +36,10 @@ with DAG(
 		clean_and_move_data()
 	
 	
+	def notify_me_function(**kwargs):
+		notify_me()
+	
+	
 	scrape_tg_operator = PythonOperator(
 			task_id='scrape_tg_function',
 			python_callable=scrape_tg_function,
@@ -46,4 +52,10 @@ with DAG(
 			provide_context=True
 			)
 	
-	scrape_tg_operator >> clean_and_move_data_operator
+	notify_me_operator = PythonOperator(
+			task_id='notify_me_function',
+			python_callable=notify_me_function,
+			provide_context=True
+			)
+	
+	scrape_tg_operator >> clean_and_move_data_operator >> notify_me_operator

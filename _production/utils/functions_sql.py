@@ -75,6 +75,42 @@ def batch_insert_to_db(table_name, columns, conflict, data):
 			connection.rollback()
 
 
+def batch_update_to_db(table_name, update_columns, condition_column, data):
+	try:
+		if not data:
+			logging.warning('No data provided for updating.')
+			return
+		
+		update_str = ', '.join(f'{col} = %s' for col in update_columns)
+		condition_str = f'{condition_column} = %s'
+		
+		db_update_query = f'''
+            UPDATE {table_name}
+            SET {update_str}
+            WHERE {condition_str};
+        '''
+		
+		if isinstance(data[0], dict):
+			data_tuples = [
+					tuple(row[col] for col in update_columns) + (row[condition_column],)
+					for row in data
+					]
+		else:
+			data_tuples = data
+		
+		with establish_db_connection() as connection:
+			with connection.cursor() as cursor:
+				execute_batch(cursor, db_update_query, data_tuples)
+			
+			connection.commit()
+	
+	except Exception as error:
+		logging.error(f'Error updating data: {error}')
+		
+		if 'connection' in locals() and connection:
+			connection.rollback()
+
+
 def fetch_from_db(table_name, select_condition='', where_condition='', group_by_condition='', order_by_condition=''):
 	try:
 		select_query = f'SELECT * FROM {table_name}'
