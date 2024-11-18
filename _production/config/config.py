@@ -54,7 +54,7 @@ TG_CLIENT = TelegramClient(StringSession(TG_STRING_SESSION), TG_API_ID, TG_API_H
 
 RAW_DATA__TG_POSTS__COLUMNS = get_table_columns(RAW_DATA__TG_POSTS__NAME, to_exclude=[])
 
-STAGING_DATA__JOBS__COLUMNS = get_table_columns(STAGING_DATA__JOBS__NAME, to_exclude=[])
+STAGING_DATA__JOBS__COLUMNS = get_table_columns(STAGING_DATA__JOBS__NAME, to_exclude=['job_post'])
 RAW_DATA_TO_STAGING_DATA__SELECT_CONDITION = ', '.join(STAGING_DATA__JOBS__COLUMNS)
 
 """OPENAI_API_CLIENT = OpenAI(api_key=OPENAI_API_KEY)

@@ -7,9 +7,49 @@ from _production import LLM_BASE_MODEL
 from _production.config.config import OPENAI_CLIENT
 
 
+class JobPost(BaseModel):
+	is_job_description: bool
+
+
 class JobURLResult(BaseModel):
 	url: list[str]
 	is_direct_job_description: list[int]
+
+
+def job_description_detection(description, max_retries=3, sleep_time=10):
+	for attempt in range(max_retries):
+		try:
+			response = OPENAI_CLIENT.beta.chat.completions.parse(
+					model=LLM_BASE_MODEL,
+					messages=[
+							{
+									'role'   : 'system',
+									'content':
+										'You are very helpful and accurate assistant.'
+									},
+							{
+									'role': 'user', 'content': (f'I have the following Telegram post:\n{description}\n\n'
+									                            'Please analyze it and tell me if it contains job descriptions (for one or several jobs). '
+									                            'If yes, return True, otherwise False. '
+									                            'Respond only with "True" or "False".')
+									}
+							], temperature=0.0,
+					response_format=JobPost
+					)
+			
+			return True if response.choices[0].message.parsed.is_job_description else False
+		
+		except Exception as error:
+			if 'Too Many Requests' in str(error):
+				logging.warning(f'Received 429 error. Retrying in {sleep_time} seconds... (Attempt {attempt + 1}/{max_retries})')
+				time.sleep(sleep_time)
+			
+			else:
+				logging.error(f'Error filtering job URLs: {error}')
+				return True
+	
+	logging.error(f'Failed to filter URLs after {max_retries} attempts')
+	return True
 
 
 def filter_job_urls(description, url_list, max_retries=3, sleep_time=10):
@@ -60,5 +100,8 @@ if __name__ == '__main__':
 			'https://example.com/jobs/engineering/software-engineer'
 			]
 	
-	filtered_urls = filter_job_urls(job_description, test_urls)
-	print(filtered_urls)
+	# filtered_urls = filter_job_urls(job_description, test_urls)
+	# print(filtered_urls)
+	
+	job_post = job_description_detection(job_description)
+	print(job_post)
