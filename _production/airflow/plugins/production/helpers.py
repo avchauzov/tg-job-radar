@@ -3,19 +3,32 @@ import os
 import re
 import smtplib
 
-from _production import GMAIL_APP_PASSWORD, RECIPIENT_EMAIL, SENDER_EMAIL, URL_PATTERN
+import markdown2
+
+from _production import GMAIL_APP_PASSWORD, RECIPIENT_EMAIL, SENDER_EMAIL, URL_REMOVAL_PATTERN
 
 
 def format_email_content(df):
 	email_content = ''
 	for index, row in df.iterrows():
-		post = re.sub(URL_PATTERN, '', row['post']).replace('\n', '<br>')
-		post_link = row['post_link']
+		post = re.sub(URL_REMOVAL_PATTERN, '', row['post'])
+		post = re.sub(r'\u00A0', ' ', post)
+		post = re.sub(r'\n+', '\n', post)
+		post = re.sub(r' +', ' ', post)
 		
-		email_content += f"<div style='margin-bottom: 10px;'>{post}<br><a href='{post_link}'><br>LINK</a></div>"
+		post = markdown2.markdown(post)
+		post = post.replace('\n', '<br>')
+		
+		post_link = row['post_link']
+		email_content += f"""
+            <div style='margin-bottom: 10px;'>
+                {post}<br>
+                <a href='{post_link}'>LINK</a>
+            </div>
+        """
 		
 		if index != len(df) - 1:
-			email_content += "</div><hr style='border: 1px solid #ccc; width: 80%; margin: 20px auto;'>"
+			email_content += "<hr style='border: 1px solid #ccc; width: 80%; margin: 20px auto;'>"
 	
 	return email_content
 

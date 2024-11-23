@@ -3,7 +3,6 @@ import logging
 import os
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from urllib.parse import urlparse, urlunparse
 
 from dotenv import load_dotenv
 
@@ -20,38 +19,6 @@ def setup_logging(file_name):
 	
 	if not logger.hasHandlers():
 		logger.addHandler(handler)
-
-
-def get_channel_link_header(entity):
-	if hasattr(entity, 'username') and entity.username:
-		return f'https://t.me/{entity.username}/'
-	
-	elif hasattr(entity, 'id'):
-		return f'https://t.me/c/{entity.id}/'
-	
-	logging.warning("Entity lacks 'username' and 'id' attributes")
-	return None
-
-
-def normalize_url(url):
-	try:
-		logging.info(f'Normalizing URL: {url}')
-		parsed_url = urlparse(url)
-		
-		normalized_path = parsed_url.path.lstrip('/').rstrip('/')
-		normalized_url = urlunparse(
-				parsed_url._replace(
-						scheme=parsed_url.scheme.lower(),
-						netloc=parsed_url.netloc.lower(),
-						path=normalized_path
-						)
-				)
-		
-		return normalized_url
-	
-	except ValueError as error:
-		logging.warning(f'Invalid URL provided for normalization: {url} | Error: {error}')
-		return None
 
 
 def get_correct_path(file_name):

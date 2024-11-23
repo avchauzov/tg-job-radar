@@ -1,34 +1,40 @@
+import sys
+
+
+sys.path.insert(0, '/home/job_search')
+
 import logging
-import os
+import pandas as pd
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
-import pandas as pd
-
 from _production import (
-	EMAIL_NOTIFICATION_CHUNK_SIZE, PROD_DATA__CONDITION_COLUMN__NAME, PROD_DATA__JOBS__NAME, PROD_DATA__JOBS__ORDER_BY_CONDITION, PROD_DATA__JOBS__SELECT_CONDITION, PROD_DATA__JOBS__WHERE_CONDITION, PROD_DATA__UPDATE_COLUMN__NAME, RECIPIENT_EMAIL, SENDER_EMAIL, STAGING_DATA__JOBS__NAME,
-	STAGING_DATA_TO_PROD_DATA__WHERE_CONDITION,
+	EMAIL_NOTIFICATION_CHUNK_SIZE, PROD_DATA__JOBS__CONDITION_COLUMN, PROD_DATA__JOBS,
+	PROD_DATA__JOBS__ORDER_BY, PROD_DATA__JOBS__SELECT, PROD_DATA__JOBS__WHERE, PROD_DATA__JOBS__UPDATE_COLUMN,
+	RECIPIENT_EMAIL, SENDER_EMAIL, STAGING_DATA__POSTS, STAGING_TO_PROD__WHERE,
 	)
+
 from _production.airflow.plugins.production.helpers import format_email_content, send_email
 from _production.utils.functions_common import setup_logging
+from _production.config.config import STAGING_TO_PROD__SELECT
 from _production.utils.functions_sql import batch_update_to_db, fetch_from_db, move_data_with_condition
 
 
-file_name = os.path.splitext(os.path.basename(__file__))[0]
+file_name = __file__[: -3]
 setup_logging(file_name)
 
 
 def fetch_new_posts():
 	columns, new_posts = fetch_from_db(
-			PROD_DATA__JOBS__NAME,
-			select_condition=PROD_DATA__JOBS__SELECT_CONDITION,
-			where_condition=PROD_DATA__JOBS__WHERE_CONDITION,
-			order_by_condition=PROD_DATA__JOBS__ORDER_BY_CONDITION
+			PROD_DATA__JOBS,
+			select_condition=PROD_DATA__JOBS__SELECT,
+			where_condition=PROD_DATA__JOBS__WHERE,
+			order_by_condition=PROD_DATA__JOBS__ORDER_BY
 			)
 	
 	if not new_posts:
 		logging.info('No new posts found to send.')
-		return None, None
+		return None
 	
 	df = pd.DataFrame(new_posts, columns=columns)
 	logging.info(f'Fetched {len(df)} new posts.')
@@ -57,11 +63,11 @@ def send_notifications(df):
 
 
 def update_notifications(successfull_ids):
-	update_data = [{'id': id, 'notificated': True} for id in successfull_ids]
+	update_data = [{'id': _id, 'notificated': True} for _id in successfull_ids]
 	batch_update_to_db(
-			table_name=PROD_DATA__JOBS__NAME,
-			update_columns=[PROD_DATA__UPDATE_COLUMN__NAME],
-			condition_column=PROD_DATA__CONDITION_COLUMN__NAME,
+			table_name=PROD_DATA__JOBS,
+			update_columns=[PROD_DATA__JOBS__UPDATE_COLUMN],
+			condition_column=PROD_DATA__JOBS__CONDITION_COLUMN,
 			data=update_data
 			)
 	
@@ -71,10 +77,10 @@ def update_notifications(successfull_ids):
 def notify_me():
 	try:
 		move_data_with_condition(
-				STAGING_DATA__JOBS__NAME,
-				PROD_DATA__JOBS__NAME,
-				select_condition='*',
-				where_condition=STAGING_DATA_TO_PROD_DATA__WHERE_CONDITION
+				STAGING_DATA__POSTS,
+				PROD_DATA__JOBS,
+				select_condition=STAGING_TO_PROD__SELECT,
+				where_condition=STAGING_TO_PROD__WHERE
 				)
 		
 		df = fetch_new_posts()

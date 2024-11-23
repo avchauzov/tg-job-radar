@@ -1,5 +1,6 @@
 import logging
 import re
+from urllib.parse import urlparse, urlunparse
 
 
 def clean_job_description(text):
@@ -17,3 +18,24 @@ def clean_job_description(text):
 	except Exception as error:
 		logging.warning(f'Error cleaning job description: {error}')
 		return text
+
+
+def normalize_url(url):
+	try:
+		logging.info(f'Normalizing URL: {url}')
+		parsed_url = urlparse(url)
+		
+		normalized_path = parsed_url.path.lstrip('/').rstrip('/')
+		normalized_url = urlunparse(
+				parsed_url._replace(
+						scheme=parsed_url.scheme.lower(),
+						netloc=parsed_url.netloc.lower(),
+						path=normalized_path
+						)
+				)
+		
+		return normalized_url
+	
+	except ValueError as error:
+		logging.warning(f'Invalid URL provided for normalization: {url} | Error: {error}')
+		return None

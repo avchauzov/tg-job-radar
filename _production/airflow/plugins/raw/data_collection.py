@@ -5,17 +5,17 @@ sys.path.insert(0, '/home/job_search')
 
 import datetime
 import logging
-import os
 
-from _production import RAW_DATA__TG_POSTS__CONFLICT, RAW_DATA__TG_POSTS__NAME
+from _production import RAW_DATA__TG_POSTS__CONFLICT, RAW_DATA__TG_POSTS
 from _production.airflow.plugins.raw.text_processing import contains_job_keywords
 from _production.config.config import DATA_COLLECTION_BATCH_SIZE, RAW_DATA__TG_POSTS__COLUMNS, SOURCE_CHANNELS, TG_CLIENT
-from _production.utils.functions_common import generate_hash, get_channel_link_header, setup_logging
+from _production.utils.functions_common import generate_hash, setup_logging
 from _production.utils.functions_sql import batch_insert_to_db, fetch_from_db
 from _production.utils.functions_text import clean_job_description
+from _production.utils.functions_tg_api import get_channel_link_header
 
 
-file_name = os.path.splitext(os.path.basename(__file__))[0]
+file_name = __file__[: -3]
 setup_logging(file_name)
 
 
@@ -23,7 +23,7 @@ def scrape_tg():
 	with TG_CLIENT as tg_client:
 		logging.info('Started scraping process.')
 		
-		_, last_date = fetch_from_db(RAW_DATA__TG_POSTS__NAME, 'channel, max(date) as date', group_by_condition='channel', order_by_condition='date desc')
+		_, last_date = fetch_from_db(RAW_DATA__TG_POSTS, 'channel, max(date) as date', group_by_condition='channel', order_by_condition='date desc')
 		last_date_dict = dict(last_date)
 		
 		for channel in SOURCE_CHANNELS:
@@ -72,14 +72,14 @@ def scrape_tg():
 					results.append(result)
 					
 					if len(results) == DATA_COLLECTION_BATCH_SIZE:
-						batch_insert_to_db(RAW_DATA__TG_POSTS__NAME, RAW_DATA__TG_POSTS__COLUMNS, RAW_DATA__TG_POSTS__CONFLICT, results)
+						batch_insert_to_db(RAW_DATA__TG_POSTS, RAW_DATA__TG_POSTS__COLUMNS, RAW_DATA__TG_POSTS__CONFLICT, results)
 						logging.info(f'Inserting batch of {len(results)} messages into database.')
 						
 						results_count += len(results)
 						results = []
 				
 				if results:
-					batch_insert_to_db(RAW_DATA__TG_POSTS__NAME, RAW_DATA__TG_POSTS__COLUMNS, RAW_DATA__TG_POSTS__CONFLICT, results)
+					batch_insert_to_db(RAW_DATA__TG_POSTS, RAW_DATA__TG_POSTS__COLUMNS, RAW_DATA__TG_POSTS__CONFLICT, results)
 					logging.info(f'Inserting batch of {len(results)} messages into database.')
 					
 					results_count += len(results)

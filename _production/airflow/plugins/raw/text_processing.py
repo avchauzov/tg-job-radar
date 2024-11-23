@@ -1,11 +1,9 @@
 import logging
 import re
 
+from _production import URL_EXTRACT_PATTERN
 from _production.config.config import PREFILTERING_WORDS
-from _production.utils.functions_common import normalize_url
-
-
-URL_PATTERN = r'https?://[^\s()]+(?:\([\w\d]+\)|[^\s,()])*(?<![.,?!])'
+from _production.utils.functions_text import normalize_url
 
 
 def contains_job_keywords(text):
@@ -23,7 +21,7 @@ def contains_job_keywords(text):
 
 def extract_urls(text):
 	try:
-		urls = list(set(re.findall(URL_PATTERN, text)))
+		urls = list(set(re.findall(URL_EXTRACT_PATTERN, text)))
 		urls = [normalize_url(url) for url in urls]
 		
 		logging.debug(f'Extracted URLs: {urls}')
