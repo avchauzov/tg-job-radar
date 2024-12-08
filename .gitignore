@@ -1,1 +1,4 @@
 _production/config/config.json
+.vscode/settings.json
+.vscode/sftp.json
+venv
