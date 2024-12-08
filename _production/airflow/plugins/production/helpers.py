@@ -1,12 +1,12 @@
+import sys
+sys.path.insert(0, '/home/job_search')
+
 import logging
 import os
-import re
 import smtplib
 import json
 
-import markdown2
-
-from _production import GMAIL_APP_PASSWORD, RECIPIENT_EMAIL, SENDER_EMAIL, URL_REMOVAL_PATTERN
+from _production import GMAIL_APP_PASSWORD, RECIPIENT_EMAIL, SENDER_EMAIL
 
 
 def format_email_content(df):
