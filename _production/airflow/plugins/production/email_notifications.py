@@ -1,6 +1,4 @@
 import sys
-
-
 sys.path.insert(0, '/home/job_search')
 
 import logging
@@ -9,27 +7,33 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
 from _production import (
-	EMAIL_NOTIFICATION_CHUNK_SIZE, PROD_DATA__JOBS__CONDITION_COLUMN, PROD_DATA__JOBS,
-	PROD_DATA__JOBS__ORDER_BY, PROD_DATA__JOBS__SELECT, PROD_DATA__JOBS__WHERE, PROD_DATA__JOBS__UPDATE_COLUMN,
-	RECIPIENT_EMAIL, SENDER_EMAIL, STAGING_DATA__POSTS, STAGING_TO_PROD__WHERE,
-	)
+	EMAIL_NOTIFICATION_CHUNK_SIZE,
+	PROD_DATA__JOBS,
+	RECIPIENT_EMAIL,
+	SENDER_EMAIL,
+	STAGING_DATA__POSTS,
+)
 
+from _production.config.config import STAGING_TO_PROD__SELECT, STAGING_TO_PROD__WHERE
 from _production.airflow.plugins.production.helpers import format_email_content, send_email
 from _production.utils.functions_common import setup_logging
-from _production.config.config import STAGING_TO_PROD__SELECT
-from _production.utils.functions_sql import batch_update_to_db, fetch_from_db, move_data_with_condition
+from _production.utils.functions_sql import (
+	batch_update_to_db,
+	fetch_from_db,
+	move_data_with_condition
+)
 
-
-file_name = __file__[: -3]
+# Setup logging
+file_name = __file__[:-3]
 setup_logging(file_name)
 
-
 def fetch_new_posts():
+	"""Fetch new unnotified posts from the production database."""
 	columns, new_posts = fetch_from_db(
 			PROD_DATA__JOBS,
-			select_condition=PROD_DATA__JOBS__SELECT,
-			where_condition=PROD_DATA__JOBS__WHERE,
-			order_by_condition=PROD_DATA__JOBS__ORDER_BY
+			select_condition='*',
+			where_condition='notificated = FALSE',
+			order_by_condition='date DESC'
 			)
 	
 	if not new_posts:
@@ -63,13 +67,15 @@ def send_notifications(df):
 
 
 def update_notifications(successfull_ids):
+	"""Update notification status for successfully sent emails."""
 	update_data = [{'id': _id, 'notificated': True} for _id in successfull_ids]
+	
 	batch_update_to_db(
-			table_name=PROD_DATA__JOBS,
-			update_columns=[PROD_DATA__JOBS__UPDATE_COLUMN],
-			condition_column=PROD_DATA__JOBS__CONDITION_COLUMN,
-			data=update_data
-			)
+		table_name=PROD_DATA__JOBS,
+		update_columns=['notificated'],  # Specify the column to update
+		condition_column='id',           # Specify the condition column
+		data=update_data
+	)
 	
 	logging.info(f'Updated {len(update_data)} rows in the database.')
 
@@ -80,7 +86,8 @@ def notify_me():
 				STAGING_DATA__POSTS,
 				PROD_DATA__JOBS,
 				select_condition=STAGING_TO_PROD__SELECT,
-				where_condition=STAGING_TO_PROD__WHERE
+				where_condition=STAGING_TO_PROD__WHERE,
+				json_columns=['post_structured']
 				)
 		
 		df = fetch_new_posts()
