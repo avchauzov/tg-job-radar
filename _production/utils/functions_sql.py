@@ -6,7 +6,7 @@ from contextlib import contextmanager
 import psycopg2
 from psycopg2.extras import execute_batch
 
-from _production import POSTGRES_HOST, POSTGRES_NAME, POSTGRES_PASS, POSTGRES_USER
+from _production import POSTGRES_HOST, POSTGRES_NAME, POSTGRES_PASS, POSTGRES_USER, PROD_DATA__JOBS, RAW_DATA__TG_POSTS, STAGING_DATA__POSTS
 
 
 @contextmanager
@@ -229,3 +229,130 @@ def move_data_with_condition(source_table, target_table, select_condition='', wh
 	except Exception as error:
 		logging.error(f'Error moving data from {source_table} to {target_table}: {error}')
 		raise
+
+
+def get_table_schema(table_name):
+	"""
+	Get table schema including column names, types, and constraints.
+	Returns a dictionary of column definitions.
+	"""
+	try:
+		schema, table = table_name.split('.')
+		
+		query = """
+		SELECT 
+			column_name,
+			data_type,
+			is_nullable,
+			column_default,
+			character_maximum_length
+		FROM information_schema.columns 
+		WHERE table_schema = %s 
+		AND table_name = %s
+		ORDER BY ordinal_position;
+		"""
+		
+		with establish_db_connection() as connection:
+			with connection.cursor() as cursor:
+				cursor.execute(query, (schema, table))
+				columns = cursor.fetchall()
+				
+				schema_dict = {}
+				for col in columns:
+					name, dtype, nullable, default, max_length = col
+					
+					# Build the column type definition
+					type_def = dtype.upper()
+					if max_length:
+						type_def += f'({max_length})'
+					if not nullable == 'YES':
+						type_def += ' NOT NULL'
+					if default:
+						type_def += f' DEFAULT {default}'
+						
+					schema_dict[name] = type_def
+				
+				# Get primary key information
+				pk_query = """
+				SELECT c.column_name
+				FROM information_schema.table_constraints tc
+				JOIN information_schema.constraint_column_usage AS ccu USING (constraint_schema, constraint_name)
+				JOIN information_schema.columns AS c ON c.table_schema = tc.constraint_schema
+					AND tc.table_name = c.table_name AND ccu.column_name = c.column_name
+				WHERE constraint_type = 'PRIMARY KEY'
+					AND tc.table_schema = %s
+					AND tc.table_name = %s;
+				"""
+				cursor.execute(pk_query, (schema, table))
+				pk_columns = [row[0] for row in cursor.fetchall()]
+				
+				# Mark primary keys in schema
+				for pk in pk_columns:
+					if pk in schema_dict:
+						schema_dict[pk] += ' PRIMARY KEY'
+				
+				return schema_dict
+	
+	except Exception as error:
+		logging.error(f'Error getting schema for {table_name}: {error}')
+		return {}
+
+
+def generate_db_mappings():
+	"""
+	Generate database mappings for all relevant tables.
+	Returns a dictionary containing table schemas and column mappings.
+	"""
+	try:
+		# Get schemas for all tables
+		raw_schema = get_table_schema(RAW_DATA__TG_POSTS)
+		staging_schema = get_table_schema(STAGING_DATA__POSTS)
+		prod_schema = get_table_schema(PROD_DATA__JOBS)
+		
+		# Define mappings based on actual table structures
+		raw_to_staging = {
+			'source_columns': list(raw_schema.keys()),
+			'target_columns': [col for col in raw_schema.keys() if col in staging_schema],
+			'json_columns': []
+		}
+		
+		staging_to_prod = {
+			'source_columns': ['id', 'channel', 'date', 'post_link', 'post_structured'],
+			'target_columns': ['id', 'channel', 'date', 'post_link', 'post_structured'],
+			'json_columns': ['post_structured']
+		}
+		
+		return {
+			'schemas': {
+				'raw': raw_schema,
+				'staging': staging_schema,
+				'prod': prod_schema
+			},
+			'mappings': {
+				'raw_to_staging': raw_to_staging,
+				'staging_to_prod': staging_to_prod
+			}
+		}
+	
+	except Exception as error:
+		logging.error(f'Error generating DB mappings: {error}')
+		raise
+
+
+def validate_table_mappings(mappings):
+	"""Validate that all mapped columns exist in source and target tables"""
+	for mapping_name, mapping in mappings.items():
+		source_table = mapping['source_table']
+		target_table = mapping['target_table']
+		source_schema = get_table_schema(source_table)
+		target_schema = get_table_schema(target_table)
+		
+		# Validate source columns exist
+		for col in mapping['source_columns']:
+			if col not in source_schema:
+				raise ValueError(f'Column {col} not found in {source_table}')
+		
+		# Validate target columns exist
+		for col in mapping['target_columns']:
+			if col not in target_schema:
+				raise ValueError(f'Column {col} not found in {target_table}')
