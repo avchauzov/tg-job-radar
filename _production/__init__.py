@@ -27,11 +27,13 @@ STAGING_DATA__POSTS__CONFLICT = ['id']
 RAW_TO_STAGING__WHERE = f'id not in (select id from {STAGING_DATA__POSTS})'
 
 PROD_DATA__JOBS = 'prod_data.jobs'
-STAGING_TO_PROD__WHERE = f'job_post is True and id not in (select id from {PROD_DATA__JOBS})'
+STAGING_TO_PROD__WHERE = f"""is_job_post is True and 
+is_single_job_post is True and
+id not in (select id from {PROD_DATA__JOBS})"""
 
-PROD_DATA__JOBS__SELECT = 'id, channel, post, post_link'
+PROD_DATA__JOBS__SELECT = 'id, channel, post_structured, post_link'
 PROD_DATA__JOBS__WHERE = 'notificated = false'
-PROD_DATA__JOBS__ORDER_BY = 'date asc, channel, post'
+PROD_DATA__JOBS__ORDER_BY = 'date asc, channel'
 
 PROD_DATA__JOBS__UPDATE_COLUMN = 'notificated'
 PROD_DATA__JOBS__CONDITION_COLUMN = 'id'
