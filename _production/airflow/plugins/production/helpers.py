@@ -2,6 +2,7 @@ import logging
 import os
 import re
 import smtplib
+import json
 
 import markdown2
 
@@ -9,28 +10,68 @@ from _production import GMAIL_APP_PASSWORD, RECIPIENT_EMAIL, SENDER_EMAIL, URL_R
 
 
 def format_email_content(df):
-	email_content = ''
-	for index, row in df.iterrows():
-		post = re.sub(URL_REMOVAL_PATTERN, '', row['post'])
-		post = re.sub(r'\u00A0', ' ', post)
-		post = re.sub(r'\n+', '\n', post)
-		post = re.sub(r' +', ' ', post)
-		
-		post = markdown2.markdown(post)
-		post = post.replace('\n', '<br>')
-		
-		post_link = row['post_link']
-		email_content += f"""
-            <div style='margin-bottom: 10px;'>
-                {post}<br>
-                <a href='{post_link}'>LINK</a>
-            </div>
-        """
-		
-		if index != len(df) - 1:
-			email_content += "<hr style='border: 1px solid #ccc; width: 80%; margin: 20px auto;'>"
+	"""Format job posts into HTML email content using structured JSON data"""
 	
-	return email_content
+	def format_value(value):
+		"""Format value to Title Case, handling special cases"""
+		if isinstance(value, bool):
+			return "Yes"
+		if value is None or value == "":
+			return None
+		if isinstance(value, str):
+			return value.title()
+		return str(value)
+
+	def get_formatted_fields(job_data):
+		"""Get formatted fields in the correct order"""
+		# Define field order and their display names
+		field_order = [
+			('job_title', 'Position'),
+			('seniority_level', 'Level'),
+			('company_name', 'Company'),
+			('location', 'Location'),
+			('remote_status', 'Work Mode'),
+			('salary_range', 'Salary'),
+			('relocation_support', 'Relocation Support'),
+			('visa_sponsorship', 'Visa Sponsorship'),
+			('description', 'Description')
+		]
+		
+		formatted_fields = []
+		job_dict = json.loads(job_data) if isinstance(job_data, str) else job_data
+		
+		for field, display_name in field_order:
+			value = job_dict.get(field)
+			if value is not None and value != "":
+				formatted_value = value if field == 'description' else format_value(value)
+				formatted_fields.append(f"<strong>{display_name}:</strong> {formatted_value}")
+		
+		return formatted_fields
+
+	html_parts = []
+	for _, row in df.iterrows():
+		formatted_fields = get_formatted_fields(row['post_structured'])
+		if formatted_fields:
+			job_html = f"""
+			<div style="margin-bottom: 20px; padding: 15px; border: 1px solid #ddd; border-radius: 5px;">
+				{'<br>'.join(formatted_fields)}
+				<br><br>
+				<a href="{row['post_link']}" style="color: #0066cc;">View Original Post</a>
+			</div>
+			"""
+			html_parts.append(job_html)
+
+	if not html_parts:
+		return "<p>No new job posts to display.</p>"
+
+	return f"""
+	<html>
+	<body style="font-family: Arial, sans-serif; color: #333;">
+		<h2 style="color: #2c3e50;">New Job Opportunities</h2>
+		{''.join(html_parts)}
+	</body>
+	</html>
+	"""
 
 
 def send_email(message):
