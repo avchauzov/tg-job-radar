@@ -3,13 +3,17 @@ import logging
 import os
 import sys
 
+from _production.utils.functions_sql import generate_db_mappings
 import openai
 from telethon.sessions import StringSession
 from telethon.sync import TelegramClient
 
-from _production import OPENAI_API_KEY, PROD_DATA__JOBS, RAW_DATA__TG_POSTS, STAGING_DATA__POSTS
+from _production import (
+	OPENAI_API_KEY,
+	PROD_DATA__JOBS,
+	STAGING_DATA__POSTS
+)
 from _production.utils.functions_common import get_correct_path, setup_logging
-from _production.utils.functions_sql import get_table_columns
 from _production.utils.functions_tg_api import create_session_string
 
 
@@ -52,39 +56,39 @@ if not TG_STRING_SESSION:
 
 TG_CLIENT = TelegramClient(StringSession(TG_STRING_SESSION), TG_API_ID, TG_API_HASH)
 
-RAW_DATA__TG_POSTS__COLUMNS = get_table_columns(RAW_DATA__TG_POSTS, to_exclude=[])
-STAGING_DATA__POSTS__COLUMNS = get_table_columns(STAGING_DATA__POSTS, to_exclude=['job_post'])
-PROD_DATA__JOBS__COLUMNS = get_table_columns(PROD_DATA__JOBS, to_exclude=['notificated'])
+LLM_CONFIG = {
+	'temperature': 0.0,
+	'max_tokens': 1000,
+	'top_p': 1.0,
+	'frequency_penalty': 0.0,
+	'presence_penalty': 0.0
+}
 
-RAW_TO_STAGING__SELECT = ', '.join(STAGING_DATA__POSTS__COLUMNS)
-STAGING_TO_PROD__SELECT = ', '.join(PROD_DATA__JOBS__COLUMNS)
-
-"""OPENAI_API_CLIENT = OpenAI(api_key=OPENAI_API_KEY)
-
-
-def load_json_into_dict(file_path):
-	with open(file_path, 'r') as file:
-		return json.load(file)
-
-
-def replace_non_alpha_with_space(text):
-	return re.sub(r'[^a-zA-Z]', ' ', text)
-
-
-def remove_consecutive_spaces(text):
-	return re.sub(r'\s+', ' ', text).strip()
-
-
-def validate_keywords(keywords):
-	return [remove_consecutive_spaces(replace_non_alpha_with_space(value)).strip().lower() for value in keywords]
-
-
-KEYWORDS = load_json_into_dict('./keywords.json').get('keywords', [])
-KEYWORDS = validate_keywords(KEYWORDS)
-
-if len(KEYWORDS) == 0:
-	raise "Keywords can't be loaded!"
-
-KEYWORDS_LENGTH = {key: key.count(' ') + 1 for key in KEYWORDS}
-MIN_NGRAM_LENGTH = min(list(KEYWORDS_LENGTH.values()))
-MAX_NGRAM_LENGTH = max(list(KEYWORDS_LENGTH.values()))"""
+# Generate DB mappings and column definitions
+try:
+    DB_MAPPINGS = generate_db_mappings()
+    
+    # Extract column definitions
+    RAW_DATA__TG_POSTS__COLUMNS = list(DB_MAPPINGS['schemas']['raw'].keys())
+    STAGING_DATA__POSTS__COLUMNS = list(DB_MAPPINGS['schemas']['staging'].keys())
+    PROD_DATA__JOBS__COLUMNS = [col for col in list(DB_MAPPINGS['schemas']['prod'].keys()) 
+                               if col != 'notificated']
+    
+    # Extract mappings for data movement
+    RAW_TO_STAGING_MAPPING = DB_MAPPINGS['mappings']['raw_to_staging']
+    STAGING_TO_PROD_MAPPING = DB_MAPPINGS['mappings']['staging_to_prod']
+    
+    # SQL query components
+    RAW_TO_STAGING__SELECT = ', '.join(RAW_TO_STAGING_MAPPING['source_columns'])
+    STAGING_TO_PROD__SELECT = ', '.join(STAGING_TO_PROD_MAPPING['source_columns'])
+    
+    RAW_TO_STAGING__WHERE = f'id not in (select id from {STAGING_DATA__POSTS})'
+    STAGING_TO_PROD__WHERE = f'''
+        is_job_post is True and 
+        is_single_job_post is True and
+        id not in (select id from {PROD_DATA__JOBS})
+    '''
+    
+except Exception as error:
+    logging.error(f'Failed to generate DB mappings: {error}')
+    raise
