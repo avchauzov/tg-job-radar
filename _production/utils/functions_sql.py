@@ -1,5 +1,6 @@
 import logging
 import time
+import json
 from contextlib import contextmanager
 
 import psycopg2
@@ -171,8 +172,19 @@ def get_table_columns(table_name, to_exclude=[]):
 		return []
 
 
-def move_data_with_condition(source_table, target_table, select_condition='', where_condition=''):
+def move_data_with_condition(source_table, target_table, select_condition='', where_condition='', json_columns=None):
+	"""
+	Move data between tables with condition.
+	
+	Args:
+		source_table (str): Source table name
+		target_table (str): Target table name
+		select_condition (str): SELECT clause
+		where_condition (str): WHERE clause
+		json_columns (list): List of column names that should be serialized as JSON
+	"""
 	try:
+		json_columns = json_columns or []  # Default to empty list if None
 		select_query = f'SELECT {select_condition} FROM {source_table} WHERE {where_condition};'
 		logging.info(f'Executing select query: {select_query}')
 		
@@ -190,18 +202,29 @@ def move_data_with_condition(source_table, target_table, select_condition='', wh
 				
 				column_names = [desc[0] for desc in cursor.description]
 				
+				# Serialize only specified columns
+				serialized_data = []
+				for row in data_to_move:
+					serialized_row = list(row)
+					for i, col_name in enumerate(column_names):
+						if col_name in json_columns:
+							value = row[i]
+							if value is not None:  # Only serialize non-None values
+								serialized_row[i] = json.dumps(value)
+					serialized_data.append(tuple(serialized_row))
+				
 				placeholders = ', '.join(['%s'] * len(column_names))
 				insert_query = f'INSERT INTO {target_table} ({", ".join(column_names)}) VALUES ({placeholders})'
 				
-				logging.info(f'Inserting {len(data_to_move)} records into {target_table}.')
+				logging.info(f'Inserting {len(serialized_data)} records into {target_table}.')
 				
 				start_time = time.time()
-				cursor.executemany(insert_query, data_to_move)
+				cursor.executemany(insert_query, serialized_data)
 				insert_time = time.time() - start_time
 				logging.info(f'Data inserted in {insert_time:.2f} seconds.')
 				
 				connection.commit()
-				logging.info(f'{len(data_to_move)} records successfully moved from {source_table} to {target_table}.')
+				logging.info(f'{len(serialized_data)} records successfully moved from {source_table} to {target_table}.')
 	
 	except Exception as error:
 		logging.error(f'Error moving data from {source_table} to {target_table}: {error}')
