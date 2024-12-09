@@ -2,3 +2,4 @@ _production/config/config.json
 .vscode/settings.json
 .vscode/sftp.json
 venv
+_production/config/config_hidden.py
