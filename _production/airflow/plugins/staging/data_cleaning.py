@@ -6,13 +6,15 @@ sys.path.insert(0, "/home/job_search")
 import logging
 import pandas as pd
 import json
+import requests
 
 from _production.config.config import (
+    DATA_BATCH_SIZE,
     RAW_TO_STAGING__WHERE,
     STAGING_DATA__POSTS__COLUMNS,
+    CV_DOC_ID,
+    MATCH_SCORE_THRESHOLD,
 )
-from _production.config.config import CV_DOC_ID, MATCH_SCORE_THRESHOLD
-
 from _production import RAW_DATA__TG_POSTS, STAGING_DATA__POSTS
 from _production.utils.functions_llm import (
     job_post_detection,
@@ -28,30 +30,31 @@ file_name = __file__[:-3]
 setup_logging(file_name)
 
 
-def get_cv_content():
-    """Download CV content from Google Docs public link"""
+def fetch_cv_content(doc_id):
     try:
-        import requests
-
-        # Convert document ID to export link
-        export_link = (
-            f"https://docs.google.com/document/d/{CV_DOC_ID}/export?format=txt"
+        response = requests.get(
+            f"https://docs.google.com/document/d/{doc_id}/export?format=txt"
         )
-
-        response = requests.get(export_link)
-        response.raise_for_status()  # Raise exception for bad status codes
-
+        response.raise_for_status()
         return response.text
 
-    except Exception as error:
-        logging.error(f"Failed to fetch CV: {error}")
-        raise Exception(f"Failed to fetch CV content: {str(error)}")
+    except requests.exceptions.RequestException as error:
+        # Log detailed debug information
+        logging.debug("CV fetch failed", exc_info=True)
+
+        # Raise with context
+        raise Exception(
+            f"Failed to fetch CV content. "
+            f"Document ID: {doc_id}, "
+            f"Status code: {error.response.status_code if hasattr(error, 'response') else 'unknown'}, "
+            f"Original error: {str(error)}"
+        ) from error
 
 
 def clean_and_move_data():
     try:
         # Download CV once before processing
-        cv_content = get_cv_content()
+        cv_content = fetch_cv_content(CV_DOC_ID)
         if cv_content is None:
             raise Exception("Failed to fetch CV content")
 
@@ -63,37 +66,68 @@ def clean_and_move_data():
 
         df = pd.DataFrame(data, columns=columns)  # .sample(n=16)
 
-        df["is_job_post"] = df["post"].apply(lambda post: job_post_detection(post))
-        df["is_single_job_post"] = df.apply(
-            lambda row: False
-            if not row["is_job_post"]
-            else single_job_post_detection(row["post"]),
-            axis=1,
-        )
+        # Process in batches
+        for i in range(0, len(df), DATA_BATCH_SIZE):
+            batch_df = df[i : i + DATA_BATCH_SIZE]
 
-        df["score"] = df.apply(
-            lambda row: 0
-            if not row["is_single_job_post"]
-            else match_cv_with_job(cv_content, row["post"]),
-            axis=1,
-        )
+            try:
+                batch_df["is_job_post"] = batch_df["post"].apply(
+                    lambda post: job_post_detection(post)
+                )
+                batch_df["is_single_job_post"] = batch_df.apply(
+                    lambda row: False
+                    if not row["is_job_post"]
+                    else single_job_post_detection(row["post"]),
+                    axis=1,
+                )
 
-        df["post_structured"] = df.apply(
-            lambda row: json.dumps(job_post_parsing(row["post"]))
-            if row["is_single_job_post"] and row["score"] >= MATCH_SCORE_THRESHOLD
-            else json.dumps({}),
-            axis=1,
-        )
+                batch_df["score"] = batch_df.apply(
+                    lambda row: 0
+                    if not row["is_single_job_post"]
+                    else match_cv_with_job(cv_content, row["post"]),
+                    axis=1,
+                )
 
-        records = df.to_dict(orient="records")
-        batch_insert_to_db(
-            STAGING_DATA__POSTS, STAGING_DATA__POSTS__COLUMNS, ["id"], records
-        )
-        logging.info("Data successfully moved to staging.")
+                batch_df["post_structured"] = batch_df.apply(
+                    lambda row: json.dumps(job_post_parsing(row["post"]))
+                    if row["is_single_job_post"]
+                    and row["score"] >= MATCH_SCORE_THRESHOLD
+                    else json.dumps({}),
+                    axis=1,
+                )
+
+                records = batch_df.to_dict(orient="records")
+                batch_insert_to_db(
+                    STAGING_DATA__POSTS, STAGING_DATA__POSTS__COLUMNS, ["id"], records
+                )
+                logging.info(
+                    f"Processed and loaded batch {i // DATA_BATCH_SIZE + 1}, size: {len(records)}"
+                )
+
+            except Exception as batch_error:
+                logging.debug(
+                    f"Batch processing failed. Details: {str(batch_error)}",
+                    exc_info=True,
+                )
+
+                raise Exception(
+                    f"Failed to process batch {i // DATA_BATCH_SIZE + 1}. "
+                    f"Batch size: {len(df)}, "
+                    f"Records processed: {len(records)}. "
+                    f"Original error: {str(batch_error)}"
+                ) from batch_error
+
+        logging.info("Successfully processed all data batches")
 
     except Exception as error:
-        logging.error(f"Failed to move data: {error}")
-        raise Exception(f"Failed to move data to staging: {str(error)}")
+        logging.debug("Data pipeline failed", exc_info=True)
+
+        raise Exception(
+            f"Data pipeline failed. "
+            f"Total records: {len(df) if 'df' in locals() else 'unknown'}, "
+            f"Completed batches: {i//DATA_BATCH_SIZE if 'i' in locals() else 0}. "
+            f"Original error: {str(error)}"
+        ) from error
 
 
 if __name__ == "__main__":
