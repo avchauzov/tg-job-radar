@@ -36,6 +36,10 @@ SOURCE_CHANNELS = CONFIG.get("source_channels", [])
 DESIRED_KEYWORDS = CONFIG.get("prefiltering_words", [])
 DATA_COLLECTION_BATCH_SIZE = CONFIG.get("data_collection_batch_size", 32)
 
+MATCHING_CONFIG = CONFIG.get("matching_config", {})
+CV_DOC_ID = MATCHING_CONFIG.get("cv_doc_id", "google_doc_id")
+MATCH_SCORE_THRESHOLD = MATCHING_CONFIG.get("match_score_threshold", 70)
+
 TG_STRING_SESSION = CONFIG.get("tg_string_session")
 logging.debug(f"TG_STRING_SESSION: {TG_STRING_SESSION}")
 
@@ -84,11 +88,11 @@ try:
 
     RAW_TO_STAGING__WHERE = f"id not in (select id from {STAGING_DATA__POSTS})"
     STAGING_TO_PROD__WHERE = f"""
-        post_structured != '{{}}' and 
-        id not in (select id from {PROD_DATA__JOBS})
+        post_structured IS NOT NULL 
+        AND post_structured != '{{}}'::jsonb 
+        AND id NOT IN (SELECT id FROM {PROD_DATA__JOBS})
     """
 
-# TODO: is this correct? post_structured != '{{}}'
 
 except Exception as error:
     logging.error(f"Failed to generate DB mappings: {error}")
