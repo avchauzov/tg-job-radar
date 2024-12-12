@@ -11,7 +11,7 @@ from _production.config.config import (
     RAW_TO_STAGING__WHERE,
     STAGING_DATA__POSTS__COLUMNS,
 )
-from _production.config.config_hidden import CV_DOC_ID, MATCH_SCORE_THRESHOLD
+from _production.config.config import CV_DOC_ID, MATCH_SCORE_THRESHOLD
 
 from _production import RAW_DATA__TG_POSTS, STAGING_DATA__POSTS
 from _production.utils.functions_llm import (
@@ -45,8 +45,7 @@ def get_cv_content():
 
     except Exception as error:
         logging.error(f"Failed to fetch CV: {error}")
-        return None
-        # TODO: raise
+        raise Exception(f"Failed to fetch CV content: {str(error)}")
 
 
 def clean_and_move_data():
@@ -64,7 +63,6 @@ def clean_and_move_data():
 
         df = pd.DataFrame(data, columns=columns)  # .sample(n=16)
 
-        # TODO: below - in chunks
         df["is_job_post"] = df["post"].apply(lambda post: job_post_detection(post))
         df["is_single_job_post"] = df.apply(
             lambda row: False
@@ -95,7 +93,7 @@ def clean_and_move_data():
 
     except Exception as error:
         logging.error(f"Failed to move data: {error}")
-        # TODO: raise
+        raise Exception(f"Failed to move data to staging: {str(error)}")
 
 
 if __name__ == "__main__":
