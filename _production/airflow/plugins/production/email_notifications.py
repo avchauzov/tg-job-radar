@@ -109,6 +109,7 @@ def notify_me():
         logging.error(
             f"Failed to complete notification process: {error}", exc_info=True
         )
+        raise Exception(f"Failed to complete notification process: {str(error)}")
 
 
 if __name__ == "__main__":
