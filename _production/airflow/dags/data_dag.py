@@ -8,7 +8,7 @@ from _production.airflow.plugins.staging.data_cleaning import clean_and_move_dat
 from _production.airflow.plugins.production.email_notifications import notify_me
 from datetime import datetime, timedelta
 from airflow import DAG
-from airflow.operators.python import PythonOperator
+from airflow.operators.python import PythonOperator# TODO: install and check actuality 
 
 
 default_args = {
@@ -19,6 +19,8 @@ default_args = {
     "retry_delay": timedelta(minutes=5),
     "email": ["avchauzov.dev@gmail.com"],
     "email_on_failure": True,
+    # TODO: how does it work?
+    # TODO: connect email to phone and email clients
 }
 
 with DAG(

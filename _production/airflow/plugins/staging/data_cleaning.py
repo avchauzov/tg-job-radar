@@ -17,7 +17,7 @@ from _production import RAW_DATA__TG_POSTS, STAGING_DATA__POSTS
 from _production.utils.functions_llm import (
     job_post_detection,
     single_job_post_detection,
-    reformat_post,
+    job_post_parsing,
     match_cv_with_job,
 )
 from _production.utils.functions_common import setup_logging
@@ -46,6 +46,7 @@ def get_cv_content():
     except Exception as error:
         logging.error(f"Failed to fetch CV: {error}")
         return None
+        # TODO: raise
 
 
 def clean_and_move_data():
@@ -62,6 +63,8 @@ def clean_and_move_data():
         )
 
         df = pd.DataFrame(data, columns=columns)  # .sample(n=16)
+
+        # TODO: below - in chunks
         df["is_job_post"] = df["post"].apply(lambda post: job_post_detection(post))
         df["is_single_job_post"] = df.apply(
             lambda row: False
@@ -70,17 +73,15 @@ def clean_and_move_data():
             axis=1,
         )
 
-        # Calculate match score for single job posts
         df["score"] = df.apply(
-            lambda row: match_cv_with_job(cv_content, row["post"])
-            if row["is_single_job_post"]
-            else 0,
+            lambda row: 0
+            if not row["is_single_job_post"]
+            else match_cv_with_job(cv_content, row["post"]),
             axis=1,
         )
 
-        # Only process posts that meet the score threshold
         df["post_structured"] = df.apply(
-            lambda row: json.dumps(reformat_post(row["post"]))
+            lambda row: json.dumps(job_post_parsing(row["post"]))
             if row["is_single_job_post"] and row["score"] >= MATCH_SCORE_THRESHOLD
             else json.dumps({}),
             axis=1,
@@ -94,6 +95,7 @@ def clean_and_move_data():
 
     except Exception as error:
         logging.error(f"Failed to move data: {error}")
+        # TODO: raise
 
 
 if __name__ == "__main__":
