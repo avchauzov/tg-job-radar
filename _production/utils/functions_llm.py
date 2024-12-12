@@ -89,7 +89,7 @@ def job_post_detection(post, max_retries=3, sleep_time=10):
 
             else:
                 logging.error(f"Error detecting job post: {error}\n{post}")
-                return False
+                raise Exception(f"Error detecting job post: {error}\n{post}")
 
     logging.error(f"Failed to detect job post after {max_retries} attempts\n{post}")
     return False
@@ -141,7 +141,7 @@ def single_job_post_detection(post, max_retries=3, sleep_time=10):
 
             else:
                 logging.error(f"Error detecting single job post: {error}\n{post}")
-                return False
+                raise Exception(f"Error detecting single job post: {error}\n{post}")
 
     logging.error(
         f"Failed to detect single job post after {max_retries} attempts\n{post}"
@@ -197,7 +197,7 @@ def match_cv_with_job(cv_text: str, post: str, max_retries=3, sleep_time=10):
 
             else:
                 logging.error(f"Error matching CV: {error}\n{post}")
-                return 0
+                raise Exception(f"Error matching CV: {error}\n{post}")
 
     logging.error(f"Failed to match CV after {max_retries} attempts\n{post}")
     return 0
@@ -234,7 +234,11 @@ def job_post_parsing(post, max_retries=3, sleep_time=10):
             response = {
                 key: value
                 for key, value in response.items()
-                if (value and value.isalnum())
+                if value is not None
+                and isinstance(value, str)
+                and any(
+                    char.isalnum() for char in value
+                )  # At least one alphanumeric character
             }
             return response
 
@@ -244,10 +248,10 @@ def job_post_parsing(post, max_retries=3, sleep_time=10):
                     f"Received 429 error. Retrying in {sleep_time} seconds... (Attempt {attempt + 1}/{max_retries})"
                 )
                 time.sleep(sleep_time)
+                continue
 
-            else:
-                logging.error(f"Error parsing job post: {error}\n{post}")
-                return json.dumps({})
+            logging.error(f"Error parsing job post: {error}\n{post}")
+            raise Exception(f"Error parsing job post: {error}\n{post}")
 
     logging.error(f"Failed to parse job post after {max_retries} attempts\n{post}")
     return json.dumps({})
@@ -255,18 +259,3 @@ def job_post_parsing(post, max_retries=3, sleep_time=10):
 
 # TODO: ask to revise the script
 # TODO: create separate test cases and put into CircleCI
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-
-    test_cases = [
-        "We're hiring a Software Engineer to join our team. Apply now!",
-        "Click here to read more about modern challenger SWE face with nowadays!",
-        "Apply to our Company! Multiple positions are opened!",
-    ]
-
-    for test_case in test_cases:
-        print(test_case)
-        print("job_post_detection", job_post_detection(test_case))
-        print("single_job_post_detection", single_job_post_detection(test_case))
-        print("job_post_parsing", job_post_parsing(test_case))
-        print()
