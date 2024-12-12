@@ -18,10 +18,12 @@ setup_logging(file_name)
 
 if OPENAI_API_KEY:
     OPENAI_CLIENT = openai.OpenAI(api_key=OPENAI_API_KEY)
-
 else:
-    logging.error("OPENAI_API_KEY is not set.")
-    OPENAI_CLIENT = None
+    logging.debug("OpenAI API key validation failed", exc_info=True)
+    raise ValueError(
+        "OpenAI API key is not set. "
+        "Please set the OPENAI_API_KEY environment variable."
+    )
 
 config_path = get_correct_path("config/config.json")
 try:
@@ -29,12 +31,18 @@ try:
         CONFIG = json.load(file)
 
 except (FileNotFoundError, json.JSONDecodeError) as error:
-    logging.error(f"Error loading config: {error}")
-    raise FileNotFoundError(f"Error loading config: {error}")
+    logging.debug(f"Configuration loading failed. Details: {str(error)}", exc_info=True)
+
+    raise FileNotFoundError(
+        f"Failed to load configuration. "
+        f"Path: {config_path}, "
+        f"Error type: {error.__class__.__name__}, "
+        f"Original error: {str(error)}"
+    ) from error
 
 SOURCE_CHANNELS = CONFIG.get("source_channels", [])
 DESIRED_KEYWORDS = CONFIG.get("prefiltering_words", [])
-DATA_COLLECTION_BATCH_SIZE = CONFIG.get("data_collection_batch_size", 32)
+DATA_BATCH_SIZE = CONFIG.get("data_batch_size", 32)
 
 MATCHING_CONFIG = CONFIG.get("matching_config", {})
 CV_DOC_ID = MATCHING_CONFIG.get("cv_doc_id", "google_doc_id")
@@ -56,14 +64,6 @@ if not TG_STRING_SESSION:
 
 TG_CLIENT = TelegramClient(StringSession(TG_STRING_SESSION), TG_API_ID, TG_API_HASH)
 
-# TODO: LLM_CONFIG necessary?
-LLM_CONFIG = {
-    "temperature": 0.0,
-    "max_tokens": 1000,
-    "top_p": 1.0,
-    "frequency_penalty": 0.0,
-    "presence_penalty": 0.0,
-}
 
 # Generate DB mappings and column definitions
 try:
