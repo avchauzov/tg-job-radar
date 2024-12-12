@@ -1,5 +1,7 @@
 import sys
 
+from _production.airflow.plugins.raw.text_processing import contains_keywords
+
 
 sys.path.insert(0, "/home/job_search")
 
@@ -7,7 +9,6 @@ import datetime
 import logging
 
 from _production import RAW_DATA__TG_POSTS
-from _production.airflow.plugins.raw.text_processing import contains_keywords
 from _production.config.config import (
     DATA_COLLECTION_BATCH_SIZE,
     RAW_DATA__TG_POSTS__COLUMNS,
@@ -117,11 +118,10 @@ def scrape_tg():
                 logging.error(
                     f"Error occurred while scraping channel: {channel}. Error: {error}"
                 )
+                raise Exception(f"Failed to scrape channel {channel}: {str(error)}")
 
         logging.info("Scraping process completed.")
 
-
-# TODO: revise logging logic (balance between interruptions and notifications); maybe email notifications can be good
 
 if __name__ == "__main__":
     scrape_tg()
