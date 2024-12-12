@@ -23,6 +23,8 @@ default_args = {
     # TODO: connect email to phone and email clients
 }
 
+#TODO: create general notifications
+
 with DAG(
     "data",
     default_args=default_args,
