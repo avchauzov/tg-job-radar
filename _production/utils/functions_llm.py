@@ -3,7 +3,7 @@ import logging
 import time
 
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional
 
 from _production import LLM_BASE_MODEL
 from _production.config.config import OPENAI_CLIENT
