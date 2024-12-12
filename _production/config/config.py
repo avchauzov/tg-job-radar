@@ -3,7 +3,6 @@ import logging
 import os
 import sys
 
-from _production.config.config_hidden import MATCH_SCORE_THRESHOLD
 from _production.utils.functions_sql import generate_db_mappings
 import openai
 from telethon.sessions import StringSession
@@ -34,7 +33,7 @@ except (FileNotFoundError, json.JSONDecodeError) as error:
     raise FileNotFoundError(f"Error loading config: {error}")
 
 SOURCE_CHANNELS = CONFIG.get("source_channels", [])
-PREFILTERING_WORDS = CONFIG.get("prefiltering_words", [])
+DESIRED_KEYWORDS = CONFIG.get("prefiltering_words", [])
 DATA_COLLECTION_BATCH_SIZE = CONFIG.get("data_collection_batch_size", 32)
 
 TG_STRING_SESSION = CONFIG.get("tg_string_session")
@@ -53,6 +52,7 @@ if not TG_STRING_SESSION:
 
 TG_CLIENT = TelegramClient(StringSession(TG_STRING_SESSION), TG_API_ID, TG_API_HASH)
 
+# TODO: LLM_CONFIG necessary?
 LLM_CONFIG = {
     "temperature": 0.0,
     "max_tokens": 1000,
@@ -87,6 +87,8 @@ try:
         post_structured != '{{}}' and 
         id not in (select id from {PROD_DATA__JOBS})
     """
+
+# TODO: is this correct? post_structured != '{{}}'
 
 except Exception as error:
     logging.error(f"Failed to generate DB mappings: {error}")

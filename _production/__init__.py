@@ -33,3 +33,5 @@ EMAIL_NOTIFICATION_CHUNK_SIZE = 16
 # Regex patterns
 URL_EXTRACT_PATTERN = r'https?://[^\s()]+(?:\([\w\d]+\)|[^\s,()])*(?<![.,?!])'
 URL_REMOVAL_PATTERN = re.compile(r'(https?://\S+|www\.\S+)')
+
+# TODO: add tests
