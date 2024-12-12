@@ -1,16 +1,14 @@
 import sys
 
-from _production.airflow.plugins.raw.text_processing import contains_keywords
-
-
 sys.path.insert(0, "/home/job_search")
+
 
 import datetime
 import logging
 
 from _production import RAW_DATA__TG_POSTS
 from _production.config.config import (
-    DATA_COLLECTION_BATCH_SIZE,
+    DATA_BATCH_SIZE,
     RAW_DATA__TG_POSTS__COLUMNS,
     SOURCE_CHANNELS,
     TG_CLIENT,
@@ -19,6 +17,7 @@ from _production.utils.functions_common import generate_hash, setup_logging
 from _production.utils.functions_sql import batch_insert_to_db, fetch_from_db
 from _production.utils.functions_text import clean_job_description
 from _production.utils.functions_tg_api import get_channel_link_header
+from _production.airflow.plugins.raw.text_processing import contains_keywords
 
 
 file_name = __file__[:-3]
@@ -88,7 +87,7 @@ def scrape_tg():
 
                     results.append(result)
 
-                    if len(results) == DATA_COLLECTION_BATCH_SIZE:
+                    if len(results) == DATA_BATCH_SIZE:
                         batch_insert_to_db(
                             RAW_DATA__TG_POSTS,
                             RAW_DATA__TG_POSTS__COLUMNS,
@@ -115,10 +114,17 @@ def scrape_tg():
                 logging.info(f"Added {results_count} posts!")
 
             except Exception as error:
-                logging.error(
-                    f"Error occurred while scraping channel: {channel}. Error: {error}"
+                logging.debug(
+                    f"Channel scraping failed. Details: {str(error)}", exc_info=True
                 )
-                raise Exception(f"Failed to scrape channel {channel}: {str(error)}")
+
+                raise Exception(
+                    f"Failed to scrape channel. "
+                    f"Channel: {channel}, "
+                    f"Posts collected: {results_count}, "
+                    f"Last date: {last_date}, "
+                    f"Original error: {str(error)}"
+                ) from error
 
         logging.info("Scraping process completed.")
 
