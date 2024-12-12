@@ -232,13 +232,13 @@ def job_post_parsing(post, max_retries=3, sleep_time=10):
 
             response = response.choices[0].message.parsed.model_dump()
             response = {
-                key: value
+                key: value.strip()
                 for key, value in response.items()
-                if value is not None
-                and isinstance(value, str)
+                if isinstance(value, str)
                 and any(
                     char.isalnum() for char in value
-                )  # At least one alphanumeric character
+                )  # Ensure at least one alphanumeric character
+                and value.strip()  # Ensure the stripped value is not empty
             }
             return response
 
