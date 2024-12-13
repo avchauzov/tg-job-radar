@@ -1,6 +1,5 @@
 import sys
 
-
 sys.path.insert(0, "/home/job_search")
 
 from _production.airflow.plugins.raw.data_collection import scrape_tg
@@ -8,8 +7,9 @@ from _production.airflow.plugins.staging.data_cleaning import clean_and_move_dat
 from _production.airflow.plugins.production.email_notifications import notify_me
 from datetime import datetime, timedelta
 from airflow import DAG
-from airflow.operators.python import PythonOperator  # TODO: install and check actuality
-
+from airflow.operators.python import PythonOperator
+from airflow.exceptions import AirflowException
+import logging
 
 default_args = {
     "owner": "job_search",
@@ -20,10 +20,8 @@ default_args = {
     "email": ["avchauzov.dev@gmail.com"],
     "email_on_failure": True,
     "email_on_retry": False,
-    # TODO: connect email to phone and email clients
 }
 
-#TODO: create general notifications
 
 with DAG(
     "data",
@@ -34,13 +32,25 @@ with DAG(
 ) as dag:
 
     def scrape_tg_function(**kwargs):
-        scrape_tg()
+        try:
+            scrape_tg()
+        except Exception as error:
+            logging.error(f"Error in scrape_tg_function: {str(error)}")
+            raise AirflowException(f"Scraping failed: {str(error)}")
 
     def clean_and_move_data_function(**kwargs):
-        clean_and_move_data()
+        try:
+            clean_and_move_data()
+        except Exception as error:
+            logging.error(f"Error in clean_and_move_data_function: {str(error)}")
+            raise AirflowException(f"Data cleaning failed: {str(error)}")
 
     def notify_me_function(**kwargs):
-        notify_me()
+        try:
+            notify_me()
+        except Exception as error:
+            logging.error(f"Error in notify_me_function: {str(error)}")
+            raise AirflowException(f"Notification failed: {str(error)}")
 
     scrape_tg_operator = PythonOperator(
         task_id="scrape_tg_function", python_callable=scrape_tg_function
