@@ -233,11 +233,11 @@ def move_data_with_condition(
     Move data between tables with condition.
 
     Args:
-            source_table (str): Source table name
-            target_table (str): Target table name
-            select_condition (str): SELECT clause
-            where_condition (str): WHERE clause
-            json_columns (list): List of column names that should be serialized as JSON
+        source_table (str): Source table name
+        target_table (str): Target table name
+        select_condition (str): SELECT clause
+        where_condition (str): WHERE clause
+        json_columns (list): List of column names that should be serialized as JSON
     """
     try:
         json_columns = json_columns or []  # Default to empty list if None
