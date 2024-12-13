@@ -7,10 +7,10 @@ import psycopg2
 from psycopg2.extras import execute_batch
 
 from _production import (
-    POSTGRES_HOST,
-    POSTGRES_NAME,
-    POSTGRES_PASS,
-    POSTGRES_USER,
+    DB_HOST,
+    DB_NAME,
+    DB_PASSWORD,
+    DB_USER,
     PROD_DATA__JOBS,
     RAW_DATA__TG_POSTS,
     STAGING_DATA__POSTS,
@@ -22,10 +22,10 @@ def establish_db_connection():
     connection = None
     try:
         connection = psycopg2.connect(
-            host=POSTGRES_HOST,
-            database=POSTGRES_NAME,
-            user=POSTGRES_USER,
-            password=POSTGRES_PASS,
+            host=DB_HOST,
+            database=DB_NAME,
+            user=DB_USER,
+            password=DB_PASSWORD,
             port=5432,
         )
 
@@ -82,11 +82,11 @@ def batch_insert_to_db(table_name, columns, conflict, data):
 
             connection.commit()
 
-    except Exception as error:
-        logging.error(f"Error inserting data: {error}")
-
+    except Exception:
+        logging.error("Error inserting data", exc_info=True)
         if "connection" in locals() and connection:
             connection.rollback()
+        raise
 
 
 def batch_update_to_db(table_name, update_columns, condition_column, data):
@@ -118,11 +118,35 @@ def batch_update_to_db(table_name, update_columns, condition_column, data):
 
             connection.commit()
 
-    except Exception as error:
-        logging.error(f"Error updating data: {error}")
-
+    except Exception:
+        logging.error("Error updating data", exc_info=True)
         if "connection" in locals() and connection:
             connection.rollback()
+        raise
+
+
+def execute_query(query: str) -> tuple[list, list]:
+    """
+    Execute a SQL query and return results.
+
+    Args:
+        query: SQL query to execute
+
+    Returns:
+        Tuple of (columns, data) where columns is a list of column names
+        and data is a list of tuples containing the row values
+    """
+    try:
+        with establish_db_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(query)
+                columns = [desc[0] for desc in cursor.description]
+                data = cursor.fetchall()
+                return columns, data
+
+    except Exception:
+        logging.error("Query execution failed", exc_info=True)
+        raise
 
 
 def fetch_from_db(
@@ -164,14 +188,9 @@ def fetch_from_db(
 
         return execute_query(query)
 
-    except Exception as error:
-        logging.debug("Database fetch failed", exc_info=True)
-        raise Exception(
-            f"Failed to fetch from database. "
-            f"Table: {table}, "
-            f"Query: {query}, "
-            f"Original error: {str(error)}"
-        ) from error
+    except Exception:
+        logging.error("Database fetch failed", exc_info=True)
+        raise
 
 
 def get_table_columns(table_name, to_exclude=[]):
@@ -198,9 +217,9 @@ def get_table_columns(table_name, to_exclude=[]):
                 ]
                 return columns
 
-    except Exception as error:
-        logging.error(f"Error fetching columns for table {table_name}: {error}")
-        return []
+    except Exception:
+        logging.error(f"Error fetching columns for table {table_name}", exc_info=True)
+        raise
 
 
 def move_data_with_condition(
@@ -269,9 +288,9 @@ def move_data_with_condition(
                     f"{len(serialized_data)} records successfully moved from {source_table} to {target_table}."
                 )
 
-    except Exception as error:
+    except Exception:
         logging.error(
-            f"Error moving data from {source_table} to {target_table}: {error}"
+            f"Error moving data from {source_table} to {target_table}", exc_info=True
         )
         raise
 
@@ -338,9 +357,9 @@ def get_table_schema(table_name):
 
                 return schema_dict
 
-    except Exception as error:
-        logging.error(f"Error getting schema for {table_name}: {error}")
-        return {}
+    except Exception:
+        logging.error(f"Error getting schema for {table_name}", exc_info=True)
+        raise
 
 
 def generate_db_mappings():
@@ -364,8 +383,20 @@ def generate_db_mappings():
         }
 
         staging_to_prod = {
-            "source_columns": ["id", "channel", "date", "post_link", "post_structured"],
-            "target_columns": ["id", "channel", "date", "post_link", "post_structured"],
+            "source_columns": [
+                "id",
+                "channel",
+                "created_at",
+                "post_link",
+                "post_structured",
+            ],
+            "target_columns": [
+                "id",
+                "channel",
+                "created_at",
+                "post_link",
+                "post_structured",
+            ],
             "json_columns": ["post_structured"],
         }
 
@@ -381,8 +412,8 @@ def generate_db_mappings():
             },
         }
 
-    except Exception as error:
-        logging.error(f"Error generating DB mappings: {error}")
+    except Exception:
+        logging.error("Error generating DB mappings", exc_info=True)
         raise
 
 
