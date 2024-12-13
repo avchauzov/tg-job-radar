@@ -24,22 +24,27 @@ def setup_logging(file_name):
 
 
 def get_correct_path(file_name):
-    load_dotenv()
-    base_dir = os.getenv("CONFIG_BASE_DIR")
-    local_dir = os.getenv("CONFIG_BASE_LOCAL_DIR")
-    logging.info(f"Starting to resolve file path for: {file_name}")
+    try:
+        load_dotenv()
+        base_dir = os.getenv("CONFIG_BASE_DIR")
+        local_dir = os.getenv("CONFIG_BASE_LOCAL_DIR")
+        logging.info(f"Starting to resolve file path for: {file_name}")
 
-    base_path = Path(base_dir).resolve() if base_dir else None
-    local_path = Path(local_dir).resolve() if local_dir else None
+        base_path = Path(base_dir).resolve() if base_dir else None
+        local_path = Path(local_dir).resolve() if local_dir else None
 
-    for path in [base_path, local_path, Path(__file__).resolve().parent]:
-        if path and path.exists():
-            file_path = path / file_name
-            logging.info(f"File path resolved to: {file_path}")
-            return file_path
+        for path in [base_path, local_path, Path(__file__).resolve().parent]:
+            if path and path.exists():
+                file_path = path / file_name
+                logging.info(f"File path resolved to: {file_path}")
+                return file_path
 
-    logging.error(f"File not found at any checked path for {file_name}")
-    raise FileNotFoundError(f"File not found for {file_name}")
+        logging.error(f"File not found at any checked path for {file_name}")
+        raise FileNotFoundError(f"Could not find file: {file_name}")
+
+    except Exception:
+        logging.error(f"Error resolving path for {file_name}", exc_info=True)
+        raise
 
 
 def generate_hash(input_string):

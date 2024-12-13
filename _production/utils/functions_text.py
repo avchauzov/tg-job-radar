@@ -21,11 +21,6 @@ def clean_job_description(text):
         return text
 
 
-# TODO: revise logging format
-# TODO: more 'raise' than skip
-# TODO: airflow: notifications to email
-
-
 def normalize_url(url):
     try:
         logging.info(f"Normalizing URL: {url}")
@@ -46,4 +41,4 @@ def normalize_url(url):
         logging.warning(
             f"Invalid URL provided for normalization: {url} | Error: {error}"
         )
-        return None
+        return url
