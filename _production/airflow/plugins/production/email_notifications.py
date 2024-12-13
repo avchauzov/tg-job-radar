@@ -34,82 +34,114 @@ setup_logging(file_name)
 
 def fetch_new_posts():
     """Fetch new unnotified posts from the production database."""
-    columns, new_posts = fetch_from_db(
-        PROD_DATA__JOBS,
-        select_condition="*",
-        where_condition="notificated = FALSE",
-        order_by_condition="date DESC",
-    )
+    try:
+        columns, new_posts = fetch_from_db(
+            PROD_DATA__JOBS, select_condition="*", where_condition="notificated = FALSE"
+        )
 
-    if not new_posts:
-        logging.info("No new posts found to send.")
-        return None
+        if not new_posts:
+            logging.info("No new posts found to send.")
+            return None
 
-    df = pd.DataFrame(new_posts, columns=columns)
-    logging.info(f"Fetched {len(df)} new posts.")
+        df = pd.DataFrame(new_posts, columns=columns)
+        logging.info(f"Fetched {len(df)} new posts.")
+        return df
 
-    return df
+    except Exception as error:
+        logging.error("Failed to fetch new posts from database", exc_info=True)
+        raise Exception(f"Database fetch failed: {str(error)}") from error
 
 
 def send_notifications(df):
-    chunks = [
-        df.iloc[i : i + EMAIL_NOTIFICATION_CHUNK_SIZE]
-        for i in range(0, len(df), EMAIL_NOTIFICATION_CHUNK_SIZE)
-    ]
-    total_chunks = len(chunks)
+    try:
+        chunks = [
+            df.iloc[i : i + EMAIL_NOTIFICATION_CHUNK_SIZE]
+            for i in range(0, len(df), EMAIL_NOTIFICATION_CHUNK_SIZE)
+        ]
+        total_chunks = len(chunks)
 
-    successfull_ids = []
-    for index, chunk in enumerate(chunks, start=1):
-        email_content = format_email_content(chunk)
-        message = MIMEMultipart("alternative")
-        message["Subject"] = f"Andrew: Job Notifications ({index}/{total_chunks})"
-        message["From"] = SENDER_EMAIL
-        message["To"] = RECIPIENT_EMAIL
-        message.attach(MIMEText(email_content, "html"))
+        successfull_ids = []
+        for index, chunk in enumerate(chunks, start=1):
+            try:
+                email_content = format_email_content(chunk)
+                message = MIMEMultipart("alternative")
+                message["Subject"] = (
+                    f"Andrew: Job Notifications ({index}/{total_chunks})"
+                )
+                message["From"] = SENDER_EMAIL
+                message["To"] = RECIPIENT_EMAIL
+                message.attach(MIMEText(email_content, "html"))
 
-        if send_email(message):
-            logging.info(f"Email {index}/{total_chunks} sent successfully!")
-            successfull_ids.extend(chunk["id"].values)
+                if send_email(message):
+                    logging.info(f"Email {index}/{total_chunks} sent successfully!")
+                    successfull_ids.extend(chunk["id"].values)
+                else:
+                    logging.warning(
+                        f"Failed to send email chunk {index}/{total_chunks}"
+                    )
 
-    return successfull_ids
+            except Exception:
+                logging.error(
+                    f"Failed to process chunk {index}/{total_chunks}", exc_info=True
+                )
+                # Continue with next chunk instead of failing completely
+                continue
+
+        return successfull_ids
+
+    except Exception as error:
+        logging.error("Failed to process notification chunks", exc_info=True)
+        raise Exception(f"Notification processing failed: {str(error)}") from error
 
 
 def update_notifications(successfull_ids):
     """Update notification status for successfully sent emails."""
-    update_data = [{"id": _id, "notificated": True} for _id in successfull_ids]
+    try:
+        if not successfull_ids:
+            logging.info("No successful notifications to update")
+            return
 
-    batch_update_to_db(
-        table_name=PROD_DATA__JOBS,
-        update_columns=["notificated"],  # Specify the column to update
-        condition_column="id",  # Specify the condition column
-        data=update_data,
-    )
+        update_data = [{"id": _id, "notificated": True} for _id in successfull_ids]
 
-    logging.info(f"Updated {len(update_data)} rows in the database.")
+        batch_update_to_db(
+            table_name=PROD_DATA__JOBS,
+            update_columns=["notificated"],
+            condition_column="id",
+            data=update_data,
+        )
+
+        logging.info(f"Updated {len(update_data)} rows in the database.")
+
+    except Exception as error:
+        logging.error("Failed to update notification status", exc_info=True)
+        raise Exception(f"Database update failed: {str(error)}") from error
 
 
 def notify_me():
     try:
-        move_data_with_condition(
-            STAGING_DATA__POSTS,
-            PROD_DATA__JOBS,
-            select_condition=STAGING_TO_PROD__SELECT,
-            where_condition=STAGING_TO_PROD__WHERE,
-            json_columns=["post_structured"],
-        )
+        # Move data to production
+        try:
+            move_data_with_condition(
+                STAGING_DATA__POSTS,
+                PROD_DATA__JOBS,
+                select_condition=STAGING_TO_PROD__SELECT,
+                where_condition=STAGING_TO_PROD__WHERE,
+                json_columns=["post_structured"],
+            )
+        except Exception as move_error:
+            logging.error("Failed to move data to production", exc_info=True)
+            raise Exception(f"Data movement failed: {str(move_error)}") from move_error
 
+        # Fetch and process new posts
         df = fetch_new_posts()
         if df is not None:
             successfull_ids = send_notifications(df)
-
             if successfull_ids:
                 update_notifications(successfull_ids)
 
     except Exception as error:
-        logging.error(
-            f"Failed to complete notification process: {error}", exc_info=True
-        )
-        raise Exception(f"Failed to complete notification process: {str(error)}")
+        logging.error("Notification process failed", exc_info=True)
+        raise Exception(f"Notification process failed: {str(error)}") from error
 
 
 if __name__ == "__main__":

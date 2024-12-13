@@ -83,15 +83,22 @@ def send_email(message):
         with smtplib.SMTP(
             os.getenv("SMTP_SERVER", "smtp.gmail.com"), int(os.getenv("SMTP_PORT", 587))
         ) as server:
-            server.starttls()
-            server.login(SENDER_EMAIL, GMAIL_APP_PASSWORD)
-            server.sendmail(SENDER_EMAIL, RECIPIENT_EMAIL, message.as_string())
-            return True
+            try:
+                server.starttls()
+                server.login(SENDER_EMAIL, GMAIL_APP_PASSWORD)
+                server.sendmail(SENDER_EMAIL, RECIPIENT_EMAIL, message.as_string())
+                return True
+            except smtplib.SMTPAuthenticationError as auth_error:
+                logging.error(f"Authentication failed: {auth_error}")
+                return False
+            except smtplib.SMTPException as smtp_error:
+                logging.error(f"SMTP error occurred: {smtp_error}")
+                return False
 
-    except smtplib.SMTPException as smtp_error:
-        logging.error(f"SMTP error occurred: {smtp_error}")
+    except (ValueError, OSError) as connection_error:
+        logging.error(f"Connection setup failed: {connection_error}")
         return False
 
     except Exception as error:
-        logging.error(f"Failed to send email: {error}")
+        logging.error(f"Unexpected error while sending email: {error}")
         return False
