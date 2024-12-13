@@ -126,48 +126,52 @@ def batch_update_to_db(table_name, update_columns, condition_column, data):
 
 
 def fetch_from_db(
-    table_name,
-    select_condition="",
-    where_condition="",
-    group_by_condition="",
-    order_by_condition="",
-):
-    try:
-        select_query = f"SELECT * FROM {table_name}"
+    table: str,
+    select_condition: str = "*",
+    where_condition: str = None,
+    group_by_condition: str = None,
+    order_by_condition: str = None,
+    random_limit: int = None,
+) -> tuple[list, list]:
+    """
+    Fetch data from database table.
 
-        if select_condition:
-            select_query = f"SELECT {select_condition} FROM {table_name}"
+    Args:
+        table: Table name
+        select_condition: Columns to select
+        where_condition: WHERE clause
+        group_by_condition: GROUP BY clause
+        order_by_condition: ORDER BY clause
+        random_limit: Limit for random selection
+
+    Returns:
+        Tuple of (columns, data)
+    """
+    try:
+        query = f"SELECT {select_condition} FROM {table}"
 
         if where_condition:
-            select_query += f" WHERE {where_condition}"
+            query += f" WHERE {where_condition}"
 
         if group_by_condition:
-            select_query += f" GROUP BY {group_by_condition}"
+            query += f" GROUP BY {group_by_condition}"
 
         if order_by_condition:
-            select_query += f" ORDER BY {order_by_condition}"
+            query += f" ORDER BY {order_by_condition}"
 
-        select_query += ";"
+        if random_limit:
+            query += f" ORDER BY RANDOM() LIMIT {random_limit}"
 
-        logging.info(f"Executing query: {select_query}")
-        with establish_db_connection() as connection:
-            with connection.cursor() as cursor:
-                cursor.execute(select_query)
-                db_data = cursor.fetchall()
-
-                column_names = [desc[0] for desc in cursor.description]
-
-                if not db_data:
-                    logging.info("No data found for the query.")
-
-                else:
-                    logging.info(f"Found {len(db_data)} records from {table_name}.")
-
-        return column_names, db_data
+        return execute_query(query)
 
     except Exception as error:
-        logging.error(f"Error selecting data from {table_name}: {error}")
-        raise
+        logging.debug("Database fetch failed", exc_info=True)
+        raise Exception(
+            f"Failed to fetch from database. "
+            f"Table: {table}, "
+            f"Query: {query}, "
+            f"Original error: {str(error)}"
+        ) from error
 
 
 def get_table_columns(table_name, to_exclude=[]):
