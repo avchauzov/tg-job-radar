@@ -16,29 +16,29 @@ from _production.utils.functions_tg_api import create_session_string
 file_name = __file__[:-3]
 setup_logging(file_name)
 
-if OPENAI_API_KEY:
-    OPENAI_CLIENT = openai.OpenAI(api_key=OPENAI_API_KEY)
-else:
-    logging.debug("OpenAI API key validation failed", exc_info=True)
-    raise ValueError(
-        "OpenAI API key is not set. "
-        "Please set the OPENAI_API_KEY environment variable."
-    )
-
-config_path = get_correct_path("config/config.json")
+# OpenAI client initialization
 try:
+    if OPENAI_API_KEY:
+        OPENAI_CLIENT = openai.OpenAI(api_key=OPENAI_API_KEY)
+    else:
+        logging.error("OpenAI API key not set")
+        raise ValueError(
+            "OpenAI API key is not set. Please set the OPENAI_API_KEY environment variable."
+        )
+
+except Exception:
+    logging.error("Failed to initialize OpenAI client", exc_info=True)
+    raise
+
+# Config loading
+try:
+    config_path = get_correct_path("config/config.json")
     with open(config_path) as file:
         CONFIG = json.load(file)
 
-except (FileNotFoundError, json.JSONDecodeError) as error:
-    logging.debug(f"Configuration loading failed. Details: {str(error)}", exc_info=True)
-
-    raise FileNotFoundError(
-        f"Failed to load configuration. "
-        f"Path: {config_path}, "
-        f"Error type: {error.__class__.__name__}, "
-        f"Original error: {str(error)}"
-    ) from error
+except Exception:
+    logging.error(f"Failed to load configuration from {config_path}", exc_info=True)
+    raise
 
 SOURCE_CHANNELS = CONFIG.get("source_channels", [])
 DESIRED_KEYWORDS = CONFIG.get("prefiltering_words", [])
@@ -54,8 +54,10 @@ logging.debug(f"TG_STRING_SESSION: {TG_STRING_SESSION}")
 TG_API_ID = os.getenv("TG_API_ID")
 TG_API_HASH = os.getenv("TG_API_HASH")
 if not TG_API_ID or not TG_API_HASH:
-    logging.error("Environment variables 'TG_API_ID' and 'TG_API_HASH' must be set.")
-    raise ValueError("Missing Telegram API credentials.")
+    logging.error("Telegram API credentials not set")
+    raise ValueError(
+        "Missing Telegram API credentials. Both TG_API_ID and TG_API_HASH must be set."
+    )
 
 if not TG_STRING_SESSION:
     with TelegramClient(StringSession(), TG_API_ID, TG_API_HASH) as client:
@@ -65,11 +67,11 @@ if not TG_STRING_SESSION:
 TG_CLIENT = TelegramClient(StringSession(TG_STRING_SESSION), TG_API_ID, TG_API_HASH)
 
 
-# Generate DB mappings and column definitions
+# DB Mappings generation
 try:
     DB_MAPPINGS = generate_db_mappings()
 
-    # Extract column definitions
+    # Extract column definitions and mappings
     RAW_DATA__TG_POSTS__COLUMNS = list(DB_MAPPINGS["schemas"]["raw"].keys())
     STAGING_DATA__POSTS__COLUMNS = list(DB_MAPPINGS["schemas"]["staging"].keys())
     PROD_DATA__JOBS__COLUMNS = [
@@ -78,7 +80,6 @@ try:
         if col != "notificated"
     ]
 
-    # Extract mappings for data movement
     RAW_TO_STAGING_MAPPING = DB_MAPPINGS["mappings"]["raw_to_staging"]
     STAGING_TO_PROD_MAPPING = DB_MAPPINGS["mappings"]["staging_to_prod"]
 
@@ -93,7 +94,6 @@ try:
         AND id NOT IN (SELECT id FROM {PROD_DATA__JOBS})
     """
 
-
-except Exception as error:
-    logging.error(f"Failed to generate DB mappings: {error}")
+except Exception:
+    logging.error("Failed to generate DB mappings", exc_info=True)
     raise
