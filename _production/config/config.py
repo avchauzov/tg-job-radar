@@ -8,7 +8,13 @@ import openai
 from telethon.sessions import StringSession
 from telethon.sync import TelegramClient
 
-from _production import OPENAI_API_KEY, PROD_DATA__JOBS, STAGING_DATA__POSTS
+from _production import (
+    OPENAI_API_KEY,
+    PROD_DATA__JOBS,
+    STAGING_DATA__POSTS,
+    TG_API_HASH,
+    TG_API_ID,
+)
 from _production.utils.functions_common import get_correct_path, setup_logging
 from _production.utils.functions_tg_api import create_session_string
 
@@ -51,8 +57,6 @@ MATCH_SCORE_THRESHOLD = MATCHING_CONFIG.get("match_score_threshold", 70)
 TG_STRING_SESSION = CONFIG.get("tg_string_session")
 logging.debug(f"TG_STRING_SESSION: {TG_STRING_SESSION}")
 
-TG_API_ID = os.getenv("TG_API_ID")
-TG_API_HASH = os.getenv("TG_API_HASH")
 if not TG_API_ID or not TG_API_HASH:
     logging.error("Telegram API credentials not set")
     raise ValueError(
