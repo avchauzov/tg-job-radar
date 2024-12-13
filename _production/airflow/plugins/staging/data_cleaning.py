@@ -1,9 +1,8 @@
-import datetime
 import sys
 
 sys.path.insert(0, "/home/job_search")
 
-
+import datetime
 import logging
 import pandas as pd
 import json
@@ -18,6 +17,7 @@ from _production.config.config import (
 )
 from _production import (
     EMAIL_NOTIFICATION_CHUNK_SIZE,
+    EMAIL_NOTIFICATION_CHUNK_MULTIPLIER,
     RAW_DATA__TG_POSTS,
     STAGING_DATA__POSTS,
 )
@@ -72,7 +72,8 @@ def clean_and_move_data():
                 RAW_DATA__TG_POSTS,
                 select_condition="*",
                 where_condition=RAW_TO_STAGING__WHERE,
-                random_limit=EMAIL_NOTIFICATION_CHUNK_SIZE * 10,
+                random_limit=EMAIL_NOTIFICATION_CHUNK_SIZE
+                * EMAIL_NOTIFICATION_CHUNK_MULTIPLIER,
             )
             df = pd.DataFrame(data, columns=columns)
         except Exception as db_error:
@@ -90,12 +91,17 @@ def clean_and_move_data():
                     batch_df["is_job_post"] = batch_df["post"].apply(
                         lambda post: job_post_detection(post)
                     )
+                    # Filter out rows where is_job_post is None
+                    batch_df = batch_df[batch_df["is_job_post"].notna()]
+
                     batch_df["is_single_job_post"] = batch_df.apply(
                         lambda row: False
                         if not row["is_job_post"]
                         else single_job_post_detection(row["post"]),
                         axis=1,
                     )
+                    # Filter out rows where is_single_job_post is None
+                    batch_df = batch_df[batch_df["is_single_job_post"].notna()]
                 except Exception as detection_error:
                     raise Exception(
                         f"Job post detection failed: {str(detection_error)}"
@@ -108,11 +114,18 @@ def clean_and_move_data():
                         else match_cv_with_job(cv_content, row["post"]),
                         axis=1,
                     )
+                    # Filter out rows where score is None
+                    batch_df = batch_df[batch_df["score"].notna()]
 
                 except Exception as matching_error:
                     raise Exception(
                         f"CV matching failed: {str(matching_error)}"
                     ) from matching_error
+
+                # Only process rows that have valid scores and are single job posts
+                valid_posts_mask = batch_df["is_single_job_post"] & (
+                    batch_df["score"] >= MATCH_SCORE_THRESHOLD
+                )
 
                 batch_df["post_structured"] = batch_df.apply(
                     lambda row: json.dumps(job_post_parsing(row["post"]))
