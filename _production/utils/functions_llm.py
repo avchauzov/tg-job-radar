@@ -88,8 +88,8 @@ def job_post_detection(post, max_retries=3, sleep_time=10):
                 time.sleep(sleep_time)
 
             else:
-                logging.error(f"Error detecting job post: {error}\n{post}")
-                raise Exception(f"Error detecting job post: {error}\n{post}")
+                logging.error("Error detecting job post", exc_info=True)
+                raise
 
     logging.error(f"Failed to detect job post after {max_retries} attempts\n{post}")
     return False
@@ -140,8 +140,8 @@ def single_job_post_detection(post, max_retries=3, sleep_time=10):
                 time.sleep(sleep_time)
 
             else:
-                logging.error(f"Error detecting single job post: {error}\n{post}")
-                raise Exception(f"Error detecting single job post: {error}\n{post}")
+                logging.error("Error detecting single job post", exc_info=True)
+                raise
 
     logging.error(
         f"Failed to detect single job post after {max_retries} attempts\n{post}"
@@ -196,8 +196,8 @@ def match_cv_with_job(cv_text: str, post: str, max_retries=3, sleep_time=10):
                 time.sleep(sleep_time)
 
             else:
-                logging.error(f"Error matching CV: {error}\n{post}")
-                raise Exception(f"Error matching CV: {error}\n{post}")
+                logging.error("Error matching CV", exc_info=True)
+                raise
 
     logging.error(f"Failed to match CV after {max_retries} attempts\n{post}")
     return 0
@@ -239,6 +239,7 @@ def job_post_parsing(post, max_retries=3, sleep_time=10):
                     char.isalnum() for char in value
                 )  # Ensure at least one alphanumeric character
                 and value.strip()  # Ensure the stripped value is not empty
+                and value.strip().lower() not in ["none", "null", "не указано"]
             }
             return response
 
@@ -250,12 +251,9 @@ def job_post_parsing(post, max_retries=3, sleep_time=10):
                 time.sleep(sleep_time)
                 continue
 
-            logging.error(f"Error parsing job post: {error}\n{post}")
-            raise Exception(f"Error parsing job post: {error}\n{post}")
+            else:
+                logging.error("Error parsing job post", exc_info=True)
+                raise
 
     logging.error(f"Failed to parse job post after {max_retries} attempts\n{post}")
     return json.dumps({})
-
-
-# TODO: ask to revise the script
-# TODO: create separate test cases and put into CircleCI
