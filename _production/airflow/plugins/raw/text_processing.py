@@ -6,6 +6,9 @@ from _production.config.config import DESIRED_KEYWORDS
 
 def contains_keywords(text):
     try:
+        if not isinstance(text, str):
+            raise TypeError(f"Expected string input, got {type(text)}")
+
         text_cleaned = re.sub(r"[^a-zA-Zа-яА-ЯёЁ\s]+|\s+", " ", text).lower().strip()
 
         # Using word boundaries for exact word matching
@@ -14,6 +17,14 @@ def contains_keywords(text):
             for keyword in DESIRED_KEYWORDS
         )
 
+    except re.error as regex_error:
+        logging.error(
+            f"Regex error in contains_keywords: {regex_error}\nInput text: {text[:100]}..."
+        )
+        raise
+
     except Exception as error:
-        logging.error(f"Error in contains_job_keywords: {error}\n{text}")
-        return False
+        logging.error(
+            f"Unexpected error in contains_keywords: {error}\nInput text: {text[:100]}..."
+        )
+        raise
