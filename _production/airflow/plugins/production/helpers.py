@@ -1,7 +1,3 @@
-import sys
-
-sys.path.insert(0, "/home/job_search")
-
 import logging
 import os
 import smtplib
@@ -43,10 +39,10 @@ def format_email_content(df):
 
         for field, display_name in field_order:
             value = job_dict.get(field)
-            if value is not None and value != "":
-                formatted_value = (
-                    value if field == "description" else format_value(value, field)
-                )
+            formatted_value = (
+                value if field == "description" else format_value(value, field)
+            )
+            if formatted_value is not None:  # Only append if there's a value
                 formatted_fields.append(
                     f"<strong>{display_name}:</strong> {formatted_value}"
                 )
