@@ -5,30 +5,27 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-# Database credentials
-POSTGRES_HOST = os.getenv("POSTGRES_HOST")
-POSTGRES_NAME = os.getenv("POSTGRES_NAME")
-POSTGRES_USER = os.getenv("POSTGRES_USER")
-POSTGRES_PASS = os.getenv("POSTGRES_PASS")
+# Database configurations
+DB_HOST = os.getenv("DB_HOST", "localhost")
+DB_PORT = os.getenv("DB_PORT", "5432")
+DB_NAME = os.getenv("DB_NAME", "job_search")
+DB_USER = os.getenv("DB_USER", "postgres")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "postgres")
 
-# API credentials
+# API Keys and Authentication
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-PHONE_NUMBER = os.getenv("PHONE_NUMBER")
+LLM_BASE_MODEL = "gpt-4-turbo-preview"
 
-# Email settings
-SENDER_EMAIL = os.getenv("SENDER_EMAIL")
-RECIPIENT_EMAIL = os.getenv("RECIPIENT_EMAIL")
-GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
+# Email Configuration
+EMAIL_NOTIFICATION_CHUNK_SIZE = 32
 
-# Database table names
-RAW_DATA__TG_POSTS = "raw_data.tg_posts"
-STAGING_DATA__POSTS = "staging_data.posts"
-PROD_DATA__JOBS = "prod_data.jobs"
+# Database Table Names
+RAW_DATA__TG_POSTS = "raw.tg_posts"
+STAGING_DATA__POSTS = "staging.posts"
+PROD_DATA__JOBS = "prod.jobs"
 
 # Constants
 DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
-LLM_BASE_MODEL = "gpt-4o-mini"
-EMAIL_NOTIFICATION_CHUNK_SIZE = 16
 
 # Regex patterns
 URL_EXTRACT_PATTERN = r"https?://[^\s()]+(?:\([\w\d]+\)|[^\s,()])*(?<![.,?!])"
