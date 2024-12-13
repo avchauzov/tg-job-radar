@@ -1,3 +1,4 @@
+import datetime
 import sys
 
 sys.path.insert(0, "/home/job_search")
@@ -15,7 +16,11 @@ from _production.config.config import (
     CV_DOC_ID,
     MATCH_SCORE_THRESHOLD,
 )
-from _production import RAW_DATA__TG_POSTS, STAGING_DATA__POSTS
+from _production import (
+    EMAIL_NOTIFICATION_CHUNK_SIZE,
+    RAW_DATA__TG_POSTS,
+    STAGING_DATA__POSTS,
+)
 from _production.utils.functions_llm import (
     job_post_detection,
     single_job_post_detection,
@@ -38,17 +43,21 @@ def fetch_cv_content(doc_id):
         response.raise_for_status()
         return response.text
 
-    except requests.exceptions.RequestException as error:
-        # Log detailed debug information
+    except requests.HTTPError as error:
+        # Specific handling for HTTP errors
+        logging.debug(
+            f"CV fetch failed with HTTP error {error.response.status_code}",
+            exc_info=True,
+        )
+        raise
+    except requests.ConnectionError as _:
+        # Network connection errors
+        logging.debug("CV fetch failed due to connection error", exc_info=True)
+        raise
+    except requests.RequestException as _:
+        # Catch-all for other request-related errors
         logging.debug("CV fetch failed", exc_info=True)
-
-        # Raise with context
-        raise Exception(
-            f"Failed to fetch CV content. "
-            f"Document ID: {doc_id}, "
-            f"Status code: {error.response.status_code if hasattr(error, 'response') else 'unknown'}, "
-            f"Original error: {str(error)}"
-        ) from error
+        raise
 
 
 def clean_and_move_data():
@@ -56,37 +65,54 @@ def clean_and_move_data():
         # Download CV once before processing
         cv_content = fetch_cv_content(CV_DOC_ID)
         if cv_content is None:
-            raise Exception("Failed to fetch CV content")
+            raise ValueError("Failed to fetch CV content")
 
-        columns, data = fetch_from_db(
-            RAW_DATA__TG_POSTS,
-            select_condition="*",
-            where_condition=RAW_TO_STAGING__WHERE,
-        )
-
-        df = pd.DataFrame(data, columns=columns)  # .sample(n=16)
+        try:
+            columns, data = fetch_from_db(
+                RAW_DATA__TG_POSTS,
+                select_condition="*",
+                where_condition=RAW_TO_STAGING__WHERE,
+                random_limit=EMAIL_NOTIFICATION_CHUNK_SIZE * 10,
+            )
+            df = pd.DataFrame(data, columns=columns)
+        except Exception as db_error:
+            logging.debug(
+                "Failed to fetch or create DataFrame from database", exc_info=True
+            )
+            raise Exception(f"Database operation failed: {str(db_error)}") from db_error
 
         # Process in batches
         for i in range(0, len(df), DATA_BATCH_SIZE):
             batch_df = df[i : i + DATA_BATCH_SIZE]
 
             try:
-                batch_df["is_job_post"] = batch_df["post"].apply(
-                    lambda post: job_post_detection(post)
-                )
-                batch_df["is_single_job_post"] = batch_df.apply(
-                    lambda row: False
-                    if not row["is_job_post"]
-                    else single_job_post_detection(row["post"]),
-                    axis=1,
-                )
+                try:
+                    batch_df["is_job_post"] = batch_df["post"].apply(
+                        lambda post: job_post_detection(post)
+                    )
+                    batch_df["is_single_job_post"] = batch_df.apply(
+                        lambda row: False
+                        if not row["is_job_post"]
+                        else single_job_post_detection(row["post"]),
+                        axis=1,
+                    )
+                except Exception as detection_error:
+                    raise Exception(
+                        f"Job post detection failed: {str(detection_error)}"
+                    ) from detection_error
 
-                batch_df["score"] = batch_df.apply(
-                    lambda row: 0
-                    if not row["is_single_job_post"]
-                    else match_cv_with_job(cv_content, row["post"]),
-                    axis=1,
-                )
+                try:
+                    batch_df["score"] = batch_df.apply(
+                        lambda row: 0
+                        if not row["is_single_job_post"]
+                        else match_cv_with_job(cv_content, row["post"]),
+                        axis=1,
+                    )
+
+                except Exception as matching_error:
+                    raise Exception(
+                        f"CV matching failed: {str(matching_error)}"
+                    ) from matching_error
 
                 batch_df["post_structured"] = batch_df.apply(
                     lambda row: json.dumps(job_post_parsing(row["post"]))
@@ -95,6 +121,8 @@ def clean_and_move_data():
                     else json.dumps({}),
                     axis=1,
                 )
+
+                batch_df["created_at"] = datetime.datetime.now(datetime.UTC)
 
                 records = batch_df.to_dict(orient="records")
                 batch_insert_to_db(
