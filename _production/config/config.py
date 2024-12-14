@@ -1,6 +1,5 @@
 import json
 import logging
-import os
 import sys
 
 from _production.utils.functions_sql import generate_db_mappings
@@ -26,6 +25,8 @@ setup_logging(file_name)
 try:
     if OPENAI_API_KEY:
         OPENAI_CLIENT = openai.OpenAI(api_key=OPENAI_API_KEY)
+        openai.log = "warning"
+
     else:
         logging.error("OpenAI API key not set")
         raise ValueError(
