@@ -91,7 +91,7 @@ def scrape_tg():
 
                         if not contains_keywords(job_description_cleaned):
                             logging.info(
-                                f"Skipping message (no keywords) in channel: {channel}\n{job_description}\n{job_description_cleaned[:256]}"
+                                f"Skipping message (no keywords) in channel: {channel}"
                             )
                             continue
 
