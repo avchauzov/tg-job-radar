@@ -76,6 +76,12 @@ def clean_and_move_data():
                 * EMAIL_NOTIFICATION_CHUNK_MULTIPLIER,
             )
             df = pd.DataFrame(data, columns=columns)
+
+            # Check if DataFrame is empty
+            if df.empty:
+                logging.info("No data to process: DataFrame is empty")
+                return
+
         except Exception as db_error:
             logging.debug(
                 "Failed to fetch or create DataFrame from database", exc_info=True
