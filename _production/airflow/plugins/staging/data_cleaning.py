@@ -120,6 +120,7 @@ def clean_and_move_data():
                         else json.dumps({}),
                         axis=1,
                     )
+                    batch_df = batch_df[batch_df["post_structured"].notna()]
 
                     # Convert UTC datetime to pandas timestamp
                     batch_df.loc[:, "created_at"] = pd.Timestamp(
