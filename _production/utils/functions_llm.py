@@ -201,14 +201,13 @@ def job_post_parsing(post, max_retries=3, sleep_time=10):
     # Get initial parsed response
     response = result.model_dump()
 
-    # Basic cleaning
-    response = {
-        key: value.strip() for key, value in response.items() if isinstance(value, str)
-    }
-
-    # Additional LLM-based cleaning and standardization
+    # Get cleaned response
     cleaned_response = clean_job_post_values(response)
-    if "job_title" not in cleaned_response:
+    if not cleaned_response or "job_title" not in cleaned_response:
         return None
 
-    return cleaned_response
+    # Single strip operation only on string values
+    return {
+        key: value.strip() if isinstance(value, str) else value
+        for key, value in cleaned_response.items()
+    }
