@@ -8,19 +8,31 @@ from dotenv import load_dotenv
 
 
 def setup_logging(file_name):
+    # Configure root logger
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+
+    # Configure file handler
     handler = RotatingFileHandler(
         f"{file_name}.log", maxBytes=10 * 1024 * 1024, backupCount=3
     )
     handler.setLevel(logging.INFO)
 
+    # Set formatter
     formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
     handler.setFormatter(formatter)
 
+    # Configure module logger
     logger = logging.getLogger(__name__)
     logger.setLevel(logging.INFO)
 
+    # Add handler if not already present
     if not logger.hasHandlers():
         logger.addHandler(handler)
+
+    # Suppress common noisy loggers if needed
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
+    logging.getLogger("requests").setLevel(logging.WARNING)
 
 
 def get_correct_path(file_name):
