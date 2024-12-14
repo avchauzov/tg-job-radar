@@ -208,6 +208,7 @@ def job_post_parsing(post, max_retries=3, sleep_time=10):
 
     # Single strip operation only on string values
     return {
-        key: value.strip() if isinstance(value, str) else value
+        key: value.strip()
         for key, value in cleaned_response.items()
+        if isinstance(value, str)
     }
