@@ -69,7 +69,14 @@ Clean and standardize the provided dictionary values according to these rules:
     - Location: Title Case
     - Remote status: Capitalize First Word (Remote, Hybrid, or On-site)
     - Company names: Original capitalization
-    - Salary ranges: Standardize format (e.g., "$100K-$150K/year")
+    - Salary ranges: Standardize format with currency symbols:
+        - USD: "$100K-$150K/year"
+        - EUR: "€60K-€80K/year"
+        - GBP: "£50K-£70K/year"
+        - RUB: "₽100K-150K/month"
+        - JPY: "¥5M-¥7M/year"
+        - Keep original currency if specified
+        - Include period (year/month) if specified
             
 Return the cleaned dictionary with standardized values."""
 
