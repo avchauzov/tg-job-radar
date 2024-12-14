@@ -9,16 +9,6 @@ from _production import GMAIL_APP_PASSWORD, RECIPIENT_EMAIL, SENDER_EMAIL
 def format_email_content(df):
     """Format job posts into HTML email content using structured JSON data"""
 
-    def format_value(value, field):
-        """Format value to Title Case, handling special cases"""
-        if isinstance(value, bool):
-            return "Yes"
-        if value is None or value == "":
-            return None
-        if isinstance(value, str):
-            return value if field == "job_title" else value.title()
-        return str(value)
-
     def get_formatted_fields(job_data):
         """Get formatted fields in the correct order"""
         # Define field order and their display names
@@ -39,13 +29,10 @@ def format_email_content(df):
 
         for field, display_name in field_order:
             value = job_dict.get(field)
-            formatted_value = (
-                value if field == "description" else format_value(value, field)
-            )
-            if formatted_value is not None:  # Only append if there's a value
-                formatted_fields.append(
-                    f"<strong>{display_name}:</strong> {formatted_value}"
-                )
+            if value is not None:  # Only append if there's a value
+                # Convert boolean to "Yes"
+                value = "Yes" if isinstance(value, bool) and value else value
+                formatted_fields.append(f"<strong>{display_name}:</strong> {value}")
 
         return formatted_fields
 
@@ -54,24 +41,24 @@ def format_email_content(df):
         formatted_fields = get_formatted_fields(row["post_structured"])
         if formatted_fields:
             job_html = f"""
-			<div style="margin-bottom: 20px; padding: 15px; border: 1px solid #ddd; border-radius: 5px;">
-				{'<br>'.join(formatted_fields)}
-				<br><br>
-				<a href="{row['post_link']}" style="color: #0066cc;">View Original Post</a>
-			</div>
-			"""
+            <div style="margin-bottom: 20px; padding: 15px; border: 1px solid #ddd; border-radius: 5px;">
+                {'<br>'.join(formatted_fields)}
+                <br><br>
+                <a href="{row['post_link']}" style="color: #0066cc;">View Original Post</a>
+            </div>
+            """
             html_parts.append(job_html)
 
     if not html_parts:
         return "<p>No new job posts to display.</p>"
 
     return f"""
-	<html>
-	<body style="font-family: Arial, sans-serif; color: #333;">
-		{''.join(html_parts)}
-	</body>
-	</html>
-	"""
+    <html>
+    <body style="font-family: Arial, sans-serif; color: #333;">
+        {''.join(html_parts)}
+    </body>
+    </html>
+    """
 
 
 def send_email(message):
