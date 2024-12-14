@@ -25,7 +25,8 @@ setup_logging(file_name)
 try:
     if OPENAI_API_KEY:
         OPENAI_CLIENT = openai.OpenAI(api_key=OPENAI_API_KEY)
-        openai.log = "warning"
+        openai._utils._logs.logger.setLevel(logging.WARNING)
+        openai._utils._logs.httpx_logger.setLevel(logging.WARNING)
 
     else:
         logging.error("OpenAI API key not set")
