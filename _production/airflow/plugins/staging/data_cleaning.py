@@ -84,76 +84,73 @@ def clean_and_move_data():
 
         # Process in batches
         for i in range(0, len(df), DATA_BATCH_SIZE):
-            batch_df = df[i : i + DATA_BATCH_SIZE]
+            batch_df = df[i : i + DATA_BATCH_SIZE].copy()
+            records = []  # Initialize records variable
 
             try:
-                try:
-                    batch_df["is_job_post"] = batch_df["post"].apply(
-                        lambda post: job_post_detection(post)
-                    )
-                    # Filter out rows where is_job_post is None
-                    batch_df = batch_df[batch_df["is_job_post"].notna()]
+                # Job post detection
+                batch_df.loc[:, "is_job_post"] = batch_df["post"].apply(
+                    lambda post: job_post_detection(post)
+                )
+                batch_df = batch_df[batch_df["is_job_post"].notna()]
 
-                    batch_df["is_single_job_post"] = batch_df.apply(
+                if not batch_df.empty:
+                    batch_df.loc[:, "is_single_job_post"] = batch_df.apply(
                         lambda row: False
                         if not row["is_job_post"]
                         else single_job_post_detection(row["post"]),
                         axis=1,
                     )
-                    # Filter out rows where is_single_job_post is None
                     batch_df = batch_df[batch_df["is_single_job_post"].notna()]
-                except Exception as detection_error:
-                    raise Exception(
-                        f"Job post detection failed: {str(detection_error)}"
-                    ) from detection_error
 
-                try:
-                    batch_df["score"] = batch_df.apply(
+                if not batch_df.empty:
+                    batch_df.loc[:, "score"] = batch_df.apply(
                         lambda row: 0
                         if not row["is_single_job_post"]
                         else match_cv_with_job(cv_content, row["post"]),
                         axis=1,
                     )
-                    # Filter out rows where score is None
                     batch_df = batch_df[batch_df["score"].notna()]
 
-                except Exception as matching_error:
-                    raise Exception(
-                        f"CV matching failed: {str(matching_error)}"
-                    ) from matching_error
+                    # Post parsing for valid entries
+                    batch_df.loc[:, "post_structured"] = batch_df.apply(
+                        lambda row: json.dumps(job_post_parsing(row["post"]))
+                        if row["is_single_job_post"]
+                        and row["score"] >= MATCH_SCORE_THRESHOLD
+                        else json.dumps({}),
+                        axis=1,
+                    )
 
-                # Only process rows that have valid scores and are single job posts
-                valid_posts_mask = batch_df["is_single_job_post"] & (
-                    batch_df["score"] >= MATCH_SCORE_THRESHOLD
-                )
+                    # Convert UTC datetime to pandas timestamp
+                    batch_df.loc[:, "created_at"] = pd.Timestamp(
+                        datetime.datetime.now(datetime.UTC)
+                    ).tz_localize(None)
 
-                batch_df["post_structured"] = batch_df.apply(
-                    lambda row: json.dumps(job_post_parsing(row["post"]))
-                    if row["is_single_job_post"]
-                    and row["score"] >= MATCH_SCORE_THRESHOLD
-                    else json.dumps({}),
-                    axis=1,
-                )
+                    records = batch_df.to_dict(orient="records")
 
-                batch_df["created_at"] = datetime.datetime.now(datetime.UTC)
-
-                records = batch_df.to_dict(orient="records")
-                batch_insert_to_db(
-                    STAGING_DATA__POSTS, STAGING_DATA__POSTS__COLUMNS, ["id"], records
-                )
-                logging.info(
-                    f"Processed and loaded batch {i // DATA_BATCH_SIZE + 1}, size: {len(records)}"
-                )
+                    if records:  # Only insert if we have records
+                        batch_insert_to_db(
+                            STAGING_DATA__POSTS,
+                            STAGING_DATA__POSTS__COLUMNS,
+                            ["id"],
+                            records,
+                        )
+                        logging.info(
+                            f"Processed and loaded batch {i // DATA_BATCH_SIZE + 1}, size: {len(records)}"
+                        )
+                    else:
+                        logging.info(
+                            f"No valid records in batch {i // DATA_BATCH_SIZE + 1}"
+                        )
 
             except Exception as batch_error:
                 logging.debug(
                     f"Batch processing failed. Details: {str(batch_error)}",
                     exc_info=True,
                 )
-
                 raise Exception(
                     f"Failed to process batch {i // DATA_BATCH_SIZE + 1}. "
-                    f"Batch size: {len(df)}, "
+                    f"Batch size: {len(batch_df)}, "
                     f"Records processed: {len(records)}. "
                     f"Original error: {str(batch_error)}"
                 ) from batch_error
@@ -162,7 +159,6 @@ def clean_and_move_data():
 
     except Exception as error:
         logging.debug("Data pipeline failed", exc_info=True)
-
         raise Exception(
             f"Data pipeline failed. "
             f"Total records: {len(df) if 'df' in locals() else 'unknown'}, "
