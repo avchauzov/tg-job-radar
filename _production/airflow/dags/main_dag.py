@@ -1,6 +1,9 @@
 import sys
+from pathlib import Path
 
+PROJECT_ROOT = Path(__file__).parent.parent.parent.parent.parent.absolute()
 sys.path.insert(0, "/home/job_search")
+sys.path.insert(0, str(PROJECT_ROOT))
 
 from _production.airflow.plugins.raw.data_collection import scrape_tg
 from _production.airflow.plugins.staging.data_cleaning import clean_and_move_data
@@ -24,7 +27,7 @@ default_args = {
 
 
 with DAG(
-    "data",
+    "job_search",
     default_args=default_args,
     schedule=timedelta(days=1),
     catchup=False,
