@@ -1,6 +1,9 @@
 import sys
+from pathlib import Path
 
+PROJECT_ROOT = Path(__file__).parent.parent.parent.parent.parent.absolute()
 sys.path.insert(0, "/home/job_search")
+sys.path.insert(0, str(PROJECT_ROOT))
 
 import logging
 import pandas as pd
