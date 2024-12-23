@@ -120,10 +120,11 @@ try:
     RAW_TO_STAGING__WHERE = (
         f"id not in (select id from {RAW_TO_STAGING_MAPPING['target_table']})"
     )
-    STAGING_TO_PROD__WHERE = f"""
+    STAGING_TO_PROD__WHERE = """
         post_structured IS NOT NULL
-        AND post_structured != '{{}}'::jsonb
-        AND id NOT IN (SELECT id FROM {STAGING_TO_PROD_MAPPING['target_table']})
+        AND post_structured != '{}'::jsonb
+        AND post_structured != 'null'::jsonb
+        AND id NOT IN (SELECT id FROM prod_data.jobs)
     """
 
 except Exception:
