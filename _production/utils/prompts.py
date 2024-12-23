@@ -1,15 +1,14 @@
-JOB_POST_DETECTION_PROMPT = """You are an expert at analyzing job-related content. 
+JOB_POST_DETECTION_PROMPT = """You are an expert at analyzing job-related content.
 Determine if a text contains ANY job postings.
 
 A job posting MUST include:
     - Specific job title(s)
-
-AND at least one of:
-    - Job responsibilities/requirements
-    - Application instructions
-    - Employment terms
-    - Company hiring information
-    - recruiter or hiring manager contacts
+    - At least TWO of the following:
+        - Job responsibilities/requirements
+        - Application instructions
+        - Employment terms (salary, location, work type)
+        - Company hiring information
+        - Recruiter or hiring manager contacts
 
 Do NOT classify as job postings:
     - General career advice
@@ -20,7 +19,7 @@ Do NOT classify as job postings:
 
 Respond only with "True" or "False"."""
 
-SINGLE_JOB_POST_DETECTION_PROMPT = """You are an expert at analyzing job postings. 
+SINGLE_JOB_POST_DETECTION_PROMPT = """You are an expert at analyzing job postings.
 Determine if a text contains EXACTLY ONE job posting.
 
 Indicators of a single job posting:
@@ -37,7 +36,7 @@ Indicators of multiple job postings:
 
 Respond only with "True" for single job posts or "False" for multiple job posts."""
 
-CV_MATCHING_PROMPT = """You are an experienced and strict technical recruiter. 
+CV_MATCHING_PROMPT = """You are an experienced and strict technical recruiter.
 Evaluate how well a candidate's CV matches a job posting requirements.
 
 Consider:
@@ -62,7 +61,7 @@ Clean and standardize the provided dictionary values according to these rules:
 1. Remove entries where values are meaningless or equivalent to None:
     - Empty strings, '/', 'N/A', 'None', 'Null', 'не указано', etc.
     - Values that don't provide actual information
-            
+
 2. Standardize capitalization and formatting:
     - Job titles: Title Case (e.g., "Senior Software Engineer")
     - Seniority levels: Title Case, only: Junior, Mid-Level, Senior, Lead, Principal, Executive
@@ -77,10 +76,10 @@ Clean and standardize the provided dictionary values according to these rules:
         - JPY: "¥5M-¥7M/year"
         - Keep original currency if specified
         - Include period (year/month) if specified
-            
+
 Return the cleaned dictionary with standardized values."""
 
-JOB_POST_PARSING_PROMPT = """You are an expert at parsing job descriptions. 
+JOB_POST_PARSING_PROMPT = """You are an expert at parsing job descriptions.
 Extract and structure job posting information accurately.
 
 Rules:
