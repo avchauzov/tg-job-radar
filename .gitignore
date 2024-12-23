@@ -1,21 +1,34 @@
 # IDE Settings
-.vscode/settings.json
-.vscode/sftp.json
-.idea/.gitignore
-.idea/deployment.xml
-.idea/job_search.iml
-.idea/jupyter-settings.xml
-.idea/misc.xml
-.idea/modules.xml
-.idea/sshConfigs.xml
-.idea/vcs.xml
-.idea/webServers.xml
-.idea/inspectionProfiles/profiles_settings.xml
-.idea/inspectionProfiles/Project_Default.xml
+.vscode/
+    settings.json
+    sftp.json
+.idea/
+    .gitignore
+    deployment.xml
+    job_search.iml
+    jupyter-settings.xml
+    misc.xml
+    modules.xml
+    sshConfigs.xml
+    vcs.xml
+    webServers.xml
+    inspectionProfiles/profiles_settings.xml
+    inspectionProfiles/Project_Default.xml
+
+# Python
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+session_name.session
+session_name.session-journal
 
 # Environment and Dependencies
 venv
 .env
+*.env
+.env.local
+.env.*.local
 poetry.lock
 pyproject.toml
 
@@ -24,17 +37,12 @@ _production/config/config.json
 _production/config/config_hidden.py
 ___credentials/main.ppk
 
-# Python
-__pycache__/
-**/__pycache__/
-*.py[cod]
-*$py.class
-
-# Logs
-*.log
-
 # Jupyter Notebook
 .ipynb_checkpoints
 **/.ipynb_checkpoints/
 
+# Documentation
 TODO.md
+
+# Logs
+*.log
