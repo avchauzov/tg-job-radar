@@ -1,5 +1,3 @@
-import csv
-import io
 import json
 import logging
 import time
@@ -255,140 +253,95 @@ def move_data_with_condition(
     source_table: str,
     target_table: str,
     select_condition: str = "*",
-    where_condition: str = "",
+    where_condition: str = "TRUE",
     json_columns: list[str] | None = None,
-    batch_size: int = 8096,
-    use_copy: bool = False,
-) -> int:
+) -> None:
     """
-    Move data between tables with condition, supporting both COPY and INSERT methods.
+    Move data between tables with condition.
 
     Args:
         source_table (str): Source table name
         target_table (str): Target table name
-        select_condition (str): SELECT clause
-        where_condition (str): WHERE clause
-        json_columns (list): List of column names that should be serialized as JSON
-        batch_size (int): Number of records to process in each batch
-        use_copy (bool): Whether to use COPY command for data transfer
+        select_condition (str): SELECT clause (default: "*")
+        where_condition (str): WHERE clause (default: "TRUE")
+        json_columns (list[str] | None): List of column names that should be serialized as JSON
 
-    Returns:
-        int: Number of records moved
+    Examples:
+        >>> move_data_with_condition(
+        ...     "schema.source_table",
+        ...     "schema.target_table",
+        ...     "id, name, metadata",
+        ...     "created_at < NOW() - INTERVAL '1 day'",
+        ...     json_columns=["metadata"]
+        ... )
 
     Raises:
-        DatabaseError: If the operation fails
+        DatabaseError: If any database operation fails
     """
+    # Input validation
+    if not source_table or not target_table:
+        raise ValueError("Source and target table names are required")
+
     try:
-        json_columns = json_columns or []
-        select_query = f"""
-            SELECT {select_condition}
-            FROM {source_table}
-            {f'WHERE {where_condition}' if where_condition else ''};
-        """
+        json_columns = json_columns or []  # Default to empty list if None
+        select_query = (
+            f"SELECT {select_condition} FROM {source_table} WHERE {where_condition};"
+        )
 
-        connection = connection_pool.getconn()
-        try:
+        logging.info(f"Executing select query: {select_query}")
+
+        with establish_db_connection() as connection:
             with connection.cursor() as cursor:
+                start_time = time.time()
                 cursor.execute(select_query)
+                data_to_move = cursor.fetchall()
+                fetch_time = time.time() - start_time
+                logging.info(f"Data fetched in {fetch_time:.2f} seconds.")
 
-                # Check if there are any results
-                if cursor.rowcount == 0:
-                    logging.info(
-                        f"No data found to move from {source_table} to {target_table}"
-                    )
-                    return 0
+                if not data_to_move:
+                    logging.info("No data to move based on the condition.")
+                    return
+
+                # Add null check for cursor.description
+                if cursor.description is None:
+                    logging.warning("Query returned no column information.")
+                    return
 
                 column_names = [desc[0] for desc in cursor.description]
 
-                if use_copy:
-                    return _copy_data(cursor, target_table, column_names, json_columns)
-                else:
-                    return _batch_insert_data(
-                        cursor, target_table, column_names, json_columns, batch_size
-                    )
+                # Serialize only specified columns
+                serialized_data = []
+                for row in data_to_move:
+                    serialized_row = list(row)
+                    for i, col_name in enumerate(column_names):
+                        if col_name in json_columns:
+                            value = row[i]
+                            if value is not None:  # Only serialize non-None values
+                                serialized_row[i] = json.dumps(value)
+                    serialized_data.append(tuple(serialized_row))
 
-        finally:
-            connection_pool.putconn(connection)
+                placeholders = ", ".join(["%s"] * len(column_names))
+                insert_query = f'INSERT INTO {target_table} ({", ".join(column_names)}) VALUES ({placeholders})'
 
-    except Exception as error:
+                logging.info(
+                    f"Inserting {len(serialized_data)} records into {target_table}."
+                )
+
+                start_time = time.time()
+                cursor.executemany(insert_query, serialized_data)
+                insert_time = time.time() - start_time
+                logging.info(f"Data inserted in {insert_time:.2f} seconds.")
+
+                connection.commit()
+                logging.info(
+                    f"{len(serialized_data)} records successfully moved from {source_table} to {target_table}."
+                )
+
+    except Exception:
         logging.error(
             f"Error moving data from {source_table} to {target_table}", exc_info=True
         )
-        raise DatabaseError(f"Data movement failed: {str(error)}")
-
-
-def _copy_data(
-    cursor, target_table: str, column_names: list, json_columns: list
-) -> int:
-    """Helper function to move data using COPY command"""
-    output = io.StringIO()
-    writer = csv.writer(
-        output, delimiter="\t", quotechar='"', quoting=csv.QUOTE_MINIMAL
-    )
-
-    total_rows = 0
-    while True:
-        rows = cursor.fetchmany(8096)
-        if not rows:
-            break
-
-        for row in rows:
-            # Process JSON columns
-            processed_row = list(row)
-            for i, col_name in enumerate(column_names):
-                if col_name in json_columns and processed_row[i] is not None:
-                    processed_row[i] = json.dumps(processed_row[i])
-            writer.writerow(processed_row)
-            total_rows += 1
-
-    output.seek(0)
-    columns_str = ", ".join(f'"{col}"' for col in column_names)
-
-    with cursor.copy(
-        f"COPY {target_table} ({columns_str}) FROM STDIN WITH CSV DELIMITER E'\\t' QUOTE '\"'"
-    ) as copy:
-        copy.write(output.getvalue())
-
-    return total_rows
-
-
-def _batch_insert_data(
-    cursor, target_table: str, column_names: list, json_columns: list, batch_size: int
-) -> int:
-    """Helper function to move data using batch INSERT"""
-    # Check if there are any rows to process
-    if cursor.rowcount == 0:
-        return 0
-
-    placeholders = ", ".join(["%s"] * len(column_names))
-    columns_str = ", ".join(f'"{col}"' for col in column_names)
-    insert_query = f"INSERT INTO {target_table} ({columns_str}) VALUES ({placeholders})"
-
-    total_rows = 0
-    while True:
-        try:
-            rows = cursor.fetchmany(batch_size)
-            if not rows:
-                break
-
-            # Process JSON columns
-            processed_rows = []
-            for row in rows:
-                processed_row = list(row)
-                for i, col_name in enumerate(column_names):
-                    if col_name in json_columns and processed_row[i] is not None:
-                        processed_row[i] = json.dumps(processed_row[i])
-                processed_rows.append(tuple(processed_row))
-
-            execute_batch(cursor, insert_query, processed_rows)
-            total_rows += len(rows)
-
-        except psycopg2.ProgrammingError as e:
-            if "no results to fetch" in str(e):
-                break
-            raise
-
-    return total_rows
+        raise
 
 
 def get_table_schema(table_name):
