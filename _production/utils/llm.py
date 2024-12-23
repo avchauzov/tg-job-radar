@@ -223,8 +223,8 @@ def job_post_parsing(
             for key, value in cleaned_response.items()
             if isinstance(value, str)
         }
-    except LLMInputError as e:
-        logging.error(f"Input validation failed: {str(e)}")
+    except LLMInputError as error:
+        logging.error(f"Input validation failed: {str(error)}")
         return None
 
 
