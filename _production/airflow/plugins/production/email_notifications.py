@@ -79,10 +79,17 @@ def create_email_message(
     return message
 
 
+def handle_retry_failure(retry_state):
+    logging.error(
+        f"Failed to process chunk after {retry_state.attempt_number} attempts"
+    )
+    return []
+
+
 @retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=2, max=8),
-    retry_error_callback=lambda retry_state: [],  # Return empty list on final failure
+    retry_error_callback=handle_retry_failure,
 )
 def process_chunk(chunk: pd.DataFrame, index: int, total_chunks: int) -> List[int]:
     """
