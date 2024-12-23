@@ -1,21 +1,31 @@
+"""
+Telegram Job Radar DAG
+
+This DAG performs the following operations:
+1. Scrapes job postings from specified Telegram channels
+2. Cleans and processes the collected data
+3. Sends notification about the results
+
+Schedule: Daily
+"""
+
 import sys
-from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).parent.parent.parent.parent.parent.absolute()
-sys.path.insert(0, "/home/job_search")
-sys.path.insert(0, str(PROJECT_ROOT))
+project_path = "/home/tg-job-radar"
+if project_path not in sys.path:
+    sys.path.append(project_path)
 
-from _production.airflow.plugins.raw.data_collection import scrape_tg
-from _production.airflow.plugins.staging.data_cleaning import clean_and_move_data
-from _production.airflow.plugins.production.email_notifications import notify_me
 from datetime import datetime, timedelta
+
 from airflow import DAG
 from airflow.operators.python import PythonOperator
-from airflow.exceptions import AirflowException
-import logging
+
+from _production.airflow.plugins.production.email_notifications import notify_me
+from _production.airflow.plugins.raw.data_collection import scrape_tg
+from _production.airflow.plugins.staging.data_cleaning import clean_and_move_data
 
 default_args = {
-    "owner": "job_search",
+    "owner": "tg-job-radar",
     "depends_on_past": False,
     "start_date": datetime(2024, 1, 1),
     "retries": 3,
@@ -27,7 +37,7 @@ default_args = {
 
 
 with DAG(
-    "job_search",
+    "tg-job-radar",
     default_args=default_args,
     schedule=timedelta(days=1),
     catchup=False,
@@ -35,25 +45,13 @@ with DAG(
 ) as dag:
 
     def scrape_tg_function(**kwargs):
-        try:
-            scrape_tg()
-        except Exception as error:
-            logging.error(f"Error in scrape_tg_function: {str(error)}")
-            raise AirflowException(f"Scraping failed: {str(error)}")
+        scrape_tg()
 
     def clean_and_move_data_function(**kwargs):
-        try:
-            clean_and_move_data()
-        except Exception as error:
-            logging.error(f"Error in clean_and_move_data_function: {str(error)}")
-            raise AirflowException(f"Data cleaning failed: {str(error)}")
+        clean_and_move_data()
 
     def notify_me_function(**kwargs):
-        try:
-            notify_me()
-        except Exception as error:
-            logging.error(f"Error in notify_me_function: {str(error)}")
-            raise AirflowException(f"Notification failed: {str(error)}")
+        notify_me()
 
     scrape_tg_operator = PythonOperator(
         task_id="scrape_tg_function", python_callable=scrape_tg_function
