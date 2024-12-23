@@ -1,40 +1,89 @@
 import os
 import re
+from typing import Any, Dict, Pattern
+
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
 
-# Database configurations
-DB_HOST = os.getenv("DB_HOST")
-DB_NAME = os.getenv("DB_NAME")
-DB_USER = os.getenv("DB_USER")
-DB_PASSWORD = os.getenv("DB_PASSWORD")
 
-SENDER_EMAIL = os.getenv("SENDER_EMAIL")
-RECIPIENT_EMAIL = os.getenv("RECIPIENT_EMAIL")
+# Group related environment variables using dictionaries for better organization
+DATABASE: Dict[str, str] = {
+    "HOST": os.getenv("DB_HOST", ""),
+    "NAME": os.getenv("DB_NAME", ""),
+    "USER": os.getenv("DB_USER", ""),
+    "PASSWORD": os.getenv("DB_PASSWORD", ""),
+}
 
-GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
+EMAIL: Dict[str, Any] = {
+    "SENDER": os.getenv("SENDER_EMAIL", ""),
+    "RECIPIENT": os.getenv("RECIPIENT_EMAIL", ""),
+    "GMAIL_APP_PASSWORD": os.getenv("GMAIL_APP_PASSWORD", ""),
+}
 
-TG_API_ID = os.getenv("TG_API_ID")
-TG_API_HASH = os.getenv("TG_API_HASH")
+TELEGRAM: Dict[str, str] = {
+    "API_ID": os.getenv("TG_API_ID", "0"),
+    "API_HASH": os.getenv("TG_API_HASH", ""),
+}
 
-# API Keys and Authentication
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+CV_DOC_ID: str = os.getenv("CV_DOC_ID", "")
 LLM_BASE_MODEL = "gpt-4o-mini"
 
-# Email Configuration
-EMAIL_NOTIFICATION_CHUNK_SIZE = 32
-EMAIL_NOTIFICATION_CHUNK_MULTIPLIER = 32
+# Add type hints and default values for critical configurations
+OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
 
-# Database Table Names
+
+# URL regex patterns with type hints
+URL_EXTRACT_PATTERN: str = r"https?://[^\s()]+(?:\([\w\d]+\)|[^\s,()])*(?<![.,?!])"
+URL_REMOVAL_PATTERN: Pattern = re.compile(r"(https?://\S+|www\.\S+)")
+
+# Constants with type hints
+DATE_FORMAT: str = "%Y-%m-%d %H:%M:%S"
+MATCH_SCORE_THRESHOLD: int = 70  # Value between 0-100
+
+DATA_BATCH_SIZE = 32
+NUMBER_OF_BATCHES = 32
+MAX_RETRY_ATTEMPTS = 3
+
 RAW_DATA__TG_POSTS = "raw_data.tg_posts"
 STAGING_DATA__POSTS = "staging_data.posts"
 PROD_DATA__JOBS = "prod_data.jobs"
 
-# Constants
-DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+# Validate critical configurations
+missing_db_fields = [k for k, v in DATABASE.items() if not v]
+if missing_db_fields:
+    raise ValueError(
+        f"Missing database configuration values: {', '.join(missing_db_fields)}"
+    )
 
-# Regex patterns
-URL_EXTRACT_PATTERN = r"https?://[^\s()]+(?:\([\w\d]+\)|[^\s,()])*(?<![.,?!])"
-URL_REMOVAL_PATTERN = re.compile(r"(https?://\S+|www\.\S+)")
+missing_email_fields = [
+    k
+    for k, v in EMAIL.items()
+    if k in ["SENDER", "RECIPIENT", "GMAIL_APP_PASSWORD"] and not v
+]
+if missing_email_fields:
+    raise ValueError(
+        f"Missing email configuration values: {', '.join(missing_email_fields)}"
+    )
+
+missing_telegram_fields = [k for k, v in TELEGRAM.items() if not v]
+if missing_telegram_fields:
+    raise ValueError(
+        f"Missing Telegram configuration values: {', '.join(missing_telegram_fields)}"
+    )
+
+if not CV_DOC_ID:
+    raise ValueError("CV_DOC_ID environment variable is required")
+
+if not (0 <= MATCH_SCORE_THRESHOLD <= 100):
+    raise ValueError("MATCH_SCORE_THRESHOLD must be between 0 and 100")
+
+if not OPENAI_API_KEY:
+    raise ValueError("OPENAI_API_KEY environment variable is required")
+
+# Validate Telegram API_ID is numeric
+try:
+    int(TELEGRAM["API_ID"])
+except ValueError:
+    raise ValueError("TG_API_ID must be a numeric value")
