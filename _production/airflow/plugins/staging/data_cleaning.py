@@ -1,180 +1,203 @@
-import sys
-from pathlib import Path
-
-PROJECT_ROOT = Path(__file__).parent.parent.parent.parent.parent.absolute()
-sys.path.insert(0, "/home/job_search")
-sys.path.insert(0, str(PROJECT_ROOT))
-
 import datetime
-import logging
-import pandas as pd
 import json
-import requests
+import logging
+from typing import Optional
 
-from _production.config.config import (
-    DATA_BATCH_SIZE,
-    RAW_TO_STAGING__WHERE,
-    STAGING_DATA__POSTS__COLUMNS,
-    CV_DOC_ID,
-    MATCH_SCORE_THRESHOLD,
-)
+import pandas as pd
+import requests
+from tenacity import retry, stop_after_attempt, wait_exponential
+
 from _production import (
-    EMAIL_NOTIFICATION_CHUNK_SIZE,
-    EMAIL_NOTIFICATION_CHUNK_MULTIPLIER,
+    CV_DOC_ID,
+    DATA_BATCH_SIZE,
+    MATCH_SCORE_THRESHOLD,
+    MAX_RETRY_ATTEMPTS,
+    NUMBER_OF_BATCHES,
     RAW_DATA__TG_POSTS,
     STAGING_DATA__POSTS,
 )
-from _production.utils.functions_llm import (
+from _production.config.config_db import (
+    RAW_TO_STAGING__WHERE,
+    STAGING_DATA__POSTS__COLUMNS,
+)
+from _production.utils.common import setup_logging
+from _production.utils.llm import (
     job_post_detection,
-    single_job_post_detection,
     job_post_parsing,
     match_cv_with_job,
+    single_job_post_detection,
 )
-from _production.utils.functions_common import setup_logging
-from _production.utils.functions_sql import batch_insert_to_db, fetch_from_db
+from _production.utils.sql import batch_insert_to_db, fetch_from_db
+
+setup_logging(__file__[:-3])
+
+GDOCS_TIMEOUT_SECONDS = 8
+MIN_CV_LENGTH = 128
 
 
-file_name = __file__[:-3]
-setup_logging(file_name)
+def validate_cv_content(cv_content: str) -> bool:
+    """
+    Validate CV content meets minimum requirements.
+
+    Args:
+        cv_content: String content of the CV
+    Returns:
+        bool: True if valid, False otherwise
+    """
+    if not cv_content or len(cv_content.strip()) < MIN_CV_LENGTH:
+        logging.error(
+            f"CV content too short or empty. Length: {len(cv_content) if cv_content else 0}"
+        )
+        return False
+    return True
 
 
-def fetch_cv_content(doc_id):
+@retry(
+    stop=stop_after_attempt(DATA_BATCH_SIZE),
+    wait=wait_exponential(multiplier=1, min=2, max=8),
+    retry_error_callback=lambda retry_state: logging.error(
+        f"All retry attempts failed for CV fetch after {retry_state.attempt_number} attempts"
+    ),
+)
+def fetch_cv_content(doc_id: str) -> Optional[str]:
+    """
+    Fetch CV content from Google Docs with retry logic and timeout.
+
+    Args:
+        doc_id: Google Doc ID
+    Returns:
+        Optional[str]: CV content if successful, None if all retries fail
+    """
     try:
         response = requests.get(
-            f"https://docs.google.com/document/d/{doc_id}/export?format=txt"
+            f"https://docs.google.com/document/d/{doc_id}/export?format=txt",
+            timeout=GDOCS_TIMEOUT_SECONDS,
         )
         response.raise_for_status()
-        return response.text
+        content = response.text
 
-    except requests.HTTPError as error:
-        # Specific handling for HTTP errors
-        logging.debug(
-            f"CV fetch failed with HTTP error {error.response.status_code}",
-            exc_info=True,
-        )
+        if not validate_cv_content(content):
+            raise ValueError("CV content validation failed")
+
+        return content
+    except requests.RequestException as error:
+        logging.debug(f"CV fetch failed: {str(error)}", exc_info=True)
         raise
-    except requests.ConnectionError as _:
-        # Network connection errors
-        logging.debug("CV fetch failed due to connection error", exc_info=True)
-        raise
-    except requests.RequestException as _:
-        # Catch-all for other request-related errors
-        logging.debug("CV fetch failed", exc_info=True)
+
+
+def process_batch(batch_df, cv_content):
+    """Process a single batch of data."""
+    # Job post detection
+    batch_df.loc[:, "is_job_post"] = batch_df["post"].apply(job_post_detection)
+    if batch_df.empty:
+        return None
+
+    # Single job post detection
+    batch_df.loc[:, "is_single_job_post"] = batch_df[
+        batch_df["is_job_post"].notna()
+    ].apply(
+        lambda row: single_job_post_detection(row["post"])
+        if row["is_job_post"]
+        else False,
+        axis=1,
+    )
+
+    # Match score calculation
+    batch_df.loc[:, "score"] = batch_df[batch_df["is_single_job_post"].notna()].apply(
+        lambda row: match_cv_with_job(cv_content, row["post"])
+        if row["is_single_job_post"]
+        else 0,
+        axis=1,
+    )
+
+    # Post parsing
+    batch_df.loc[:, "post_structured"] = batch_df[batch_df["score"].notna()].apply(
+        lambda row: json.dumps(job_post_parsing(row["post"]))
+        if row["is_single_job_post"] and row["score"] >= MATCH_SCORE_THRESHOLD
+        else json.dumps({}),
+        axis=1,
+    )
+
+    batch_df.loc[:, "created_at"] = pd.Timestamp(
+        datetime.datetime.now(datetime.UTC)
+    ).tz_localize(None)
+    return batch_df[batch_df["post_structured"].notna()]
+
+
+@retry(
+    stop=stop_after_attempt(MAX_RETRY_ATTEMPTS),
+    wait=wait_exponential(multiplier=1, min=2, max=8),
+)
+def process_batch_with_retry(
+    batch_df: pd.DataFrame, cv_content: str
+) -> Optional[pd.DataFrame]:
+    """
+    Process batch with retry logic.
+
+    Args:
+        batch_df: DataFrame containing batch data
+        cv_content: CV content string
+    Returns:
+        Optional[pd.DataFrame]: Processed DataFrame or None if processing fails
+    """
+    try:
+        return process_batch(batch_df, cv_content)
+    except Exception as error:
+        logging.error(f"Batch processing failed: {str(error)}", exc_info=True)
         raise
 
 
 def clean_and_move_data():
+    """Main function to clean and move data from raw to staging."""
     try:
-        # Download CV once before processing
+        # Fetch and validate CV content
         cv_content = fetch_cv_content(CV_DOC_ID)
-        if cv_content is None:
-            raise ValueError("Failed to fetch CV content")
 
-        try:
-            columns, data = fetch_from_db(
-                RAW_DATA__TG_POSTS,
-                select_condition="*",
-                where_condition=RAW_TO_STAGING__WHERE,
-                random_limit=EMAIL_NOTIFICATION_CHUNK_SIZE
-                * EMAIL_NOTIFICATION_CHUNK_MULTIPLIER,
-            )
-            df = pd.DataFrame(data, columns=columns)
+        # Fetch raw data
+        columns, data = fetch_from_db(
+            RAW_DATA__TG_POSTS,
+            select_condition="*",
+            where_condition=RAW_TO_STAGING__WHERE,
+            random_limit=DATA_BATCH_SIZE * NUMBER_OF_BATCHES,
+        )
+        df = pd.DataFrame(data, columns=columns)
 
-            # Check if DataFrame is empty
-            if df.empty:
-                logging.info("No data to process: DataFrame is empty")
-                return
+        if df.empty:
+            logging.info("No data to process: DataFrame is empty")
+            return
 
-        except Exception as db_error:
-            logging.debug(
-                "Failed to fetch or create DataFrame from database", exc_info=True
-            )
-            raise Exception(f"Database operation failed: {str(db_error)}") from db_error
-
-        # Process in batches
-        for i in range(0, len(df), DATA_BATCH_SIZE):
-            batch_df = df[i : i + DATA_BATCH_SIZE].copy()
-            records = []  # Initialize records variable
-
+        # Process batches with retry logic
+        for batch_num, i in enumerate(range(0, len(df), DATA_BATCH_SIZE), 1):
             try:
-                # Job post detection
-                batch_df.loc[:, "is_job_post"] = batch_df["post"].apply(
-                    lambda post: job_post_detection(post)
-                )
-                batch_df = batch_df[batch_df["is_job_post"].notna()]
+                batch_df = df[i : i + DATA_BATCH_SIZE].copy()
+                processed_df = process_batch_with_retry(batch_df, str(cv_content))
 
-                if not batch_df.empty:
-                    batch_df.loc[:, "is_single_job_post"] = batch_df.apply(
-                        lambda row: False
-                        if not row["is_job_post"]
-                        else single_job_post_detection(row["post"]),
-                        axis=1,
+                if processed_df is not None and not processed_df.empty:
+                    records = processed_df.to_dict(orient="records")
+                    batch_insert_to_db(
+                        STAGING_DATA__POSTS,
+                        STAGING_DATA__POSTS__COLUMNS,
+                        ["id"],
+                        [{str(k): v for k, v in record.items()} for record in records],
                     )
-                    batch_df = batch_df[batch_df["is_single_job_post"].notna()]
-
-                if not batch_df.empty:
-                    batch_df.loc[:, "score"] = batch_df.apply(
-                        lambda row: 0
-                        if not row["is_single_job_post"]
-                        else match_cv_with_job(cv_content, row["post"]),
-                        axis=1,
+                    logging.info(
+                        f"Processed and loaded batch {batch_num}, size: {len(records)}"
                     )
-                    batch_df = batch_df[batch_df["score"].notna()]
-
-                    # Post parsing for valid entries
-                    batch_df.loc[:, "post_structured"] = batch_df.apply(
-                        lambda row: json.dumps(job_post_parsing(row["post"]))
-                        if row["is_single_job_post"]
-                        and row["score"] >= MATCH_SCORE_THRESHOLD
-                        else json.dumps({}),
-                        axis=1,
-                    )
-                    batch_df = batch_df[batch_df["post_structured"].notna()]
-
-                    # Convert UTC datetime to pandas timestamp
-                    batch_df.loc[:, "created_at"] = pd.Timestamp(
-                        datetime.datetime.now(datetime.UTC)
-                    ).tz_localize(None)
-
-                    records = batch_df.to_dict(orient="records")
-
-                    if records:  # Only insert if we have records
-                        batch_insert_to_db(
-                            STAGING_DATA__POSTS,
-                            STAGING_DATA__POSTS__COLUMNS,
-                            ["id"],
-                            records,
-                        )
-                        logging.info(
-                            f"Processed and loaded batch {i // DATA_BATCH_SIZE + 1}, size: {len(records)}"
-                        )
-                    else:
-                        logging.info(
-                            f"No valid records in batch {i // DATA_BATCH_SIZE + 1}"
-                        )
+                else:
+                    logging.info(f"No valid records in batch {batch_num}")
 
             except Exception as batch_error:
-                logging.debug(
-                    f"Batch processing failed. Details: {str(batch_error)}",
+                logging.error(
+                    f"Batch {batch_num} processing failed: {str(batch_error)}",
                     exc_info=True,
                 )
-                raise Exception(
-                    f"Failed to process batch {i // DATA_BATCH_SIZE + 1}. "
-                    f"Batch size: {len(batch_df)}, "
-                    f"Records processed: {len(records)}. "
-                    f"Original error: {str(batch_error)}"
-                ) from batch_error
+                continue
 
         logging.info("Successfully processed all data batches")
 
     except Exception as error:
-        logging.debug("Data pipeline failed", exc_info=True)
-        raise Exception(
-            f"Data pipeline failed. "
-            f"Total records: {len(df) if 'df' in locals() else 'unknown'}, "
-            f"Completed batches: {i//DATA_BATCH_SIZE if 'i' in locals() else 0}. "
-            f"Original error: {str(error)}"
-        ) from error
+        logging.error("Data pipeline failed", exc_info=True)
+        raise Exception(f"Data pipeline failed: {str(error)}")
 
 
 if __name__ == "__main__":
