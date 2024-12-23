@@ -11,37 +11,59 @@ from _production import EMAIL
 JsonDict = Dict[str, Any]
 
 
-def format_email_content(df) -> str:
-    """Format job posts into HTML email content."""
-    if df.empty:
-        return "No jobs to display"
+def format_email_content(df):
+    """Format job posts into HTML email content using structured JSON data"""
 
-    FIELD_ORDER = [
-        ("job_title", "Position"),
-        ("seniority_level", "Level"),
-        ("company_name", "Company"),
-        ("location", "Location"),
-        ("remote_status", "Work Mode"),
-        ("salary_range", "Salary"),
-        ("relocation_support", "Relocation Support"),
-        ("visa_sponsorship", "Visa Sponsorship"),
-        ("description", "Description"),
-    ]
-
-    def get_formatted_fields(job_data: JsonDict) -> list[str]:
-        job_dict = json.loads(job_data) if isinstance(job_data, str) else job_data
-        return [
-            f"<strong>{display_name}:</strong> {str(job_dict[field])}"
-            for field, display_name in FIELD_ORDER
-            if job_dict.get(field) is not None
+    def get_formatted_fields(job_data):
+        """Get formatted fields in the correct order"""
+        # Define field order and their display names
+        field_order = [
+            ("job_title", "Position"),
+            ("seniority_level", "Level"),
+            ("company_name", "Company"),
+            ("location", "Location"),
+            ("remote_status", "Work Mode"),
+            ("salary_range", "Salary"),
+            ("relocation_support", "Relocation Support"),
+            ("visa_sponsorship", "Visa Sponsorship"),
+            ("description", "Description"),
         ]
 
-    formatted_jobs = []
-    for _, row in df.iterrows():
-        fields = get_formatted_fields(row)
-        formatted_jobs.append("<br>".join(fields))
+        formatted_fields = []
+        job_dict = json.loads(job_data) if isinstance(job_data, str) else job_data
 
-    return "<hr><br>".join(formatted_jobs)
+        for field, display_name in field_order:
+            value = job_dict.get(field)
+            if value is not None:  # Only append if there's a value
+                # Convert boolean to "Yes"
+                value = "Yes" if isinstance(value, bool) and value else value
+                formatted_fields.append(f"<strong>{display_name}:</strong> {value}")
+
+        return formatted_fields
+
+    html_parts = []
+    for _, row in df.iterrows():
+        formatted_fields = get_formatted_fields(row["post_structured"])
+        if formatted_fields:
+            job_html = f"""
+            <div style="margin-bottom: 20px; padding: 15px; border: 1px solid #ddd; border-radius: 5px;">
+                {'<br>'.join(formatted_fields)}
+                <br><br>
+                <a href="{row['post_link']}" style="color: #0066cc;">View Original Post</a>
+            </div>
+            """
+            html_parts.append(job_html)
+
+    if not html_parts:
+        return "<p>No new job posts to display.</p>"
+
+    return f"""
+    <html>
+    <body style="font-family: Arial, sans-serif; color: #333;">
+        {''.join(html_parts)}
+    </body>
+    </html>
+    """
 
 
 def send_email(message):
