@@ -1,0 +1,13 @@
+{
+    "source_channels": [
+        "example_channel_1",
+        "example_channel_2",
+        "example_channel_3"
+    ],
+    "prefiltering_words": [
+        "keyword1",
+        "keyword2",
+        "keyword3"
+    ],
+    "tg_string_session": "your_telegram_string_session_here"
+} 
