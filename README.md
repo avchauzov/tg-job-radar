@@ -20,7 +20,6 @@ An automated system for collecting and analyzing job postings from Telegram chan
 │   ├── config
 │   │   ├── config_db.py
 │   │   ├── config.json
-│   │   ├── config.json.example
 │   │   └── config.py
 │   ├── __init__.py
 │   └── utils
@@ -33,9 +32,7 @@ An automated system for collecting and analyzing job postings from Telegram chan
 │       ├── text.py
 │       └── tg.py
 ├── pyproject.toml
-├── README.md
-├── session_name.session
-└── session_name.session-journal
+└── README.md
 ```
 
 ## Features
