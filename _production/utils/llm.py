@@ -214,13 +214,20 @@ def job_post_parsing(
 
         # Get cleaned response
         cleaned_response = clean_job_post_values(response)
-        if not cleaned_response or "job_title" not in cleaned_response:
+
+        cleaned_response_filtered = {
+            key: value for key, value in cleaned_response.items() if value
+        }
+        if (
+            not cleaned_response_filtered
+            or "job_title" not in cleaned_response_filtered
+        ):
             return None
 
         # Single strip operation only on string values
         return {
             key: value.strip()
-            for key, value in cleaned_response.items()
+            for key, value in cleaned_response_filtered.items()
             if isinstance(value, str)
         }
     except LLMInputError as error:
