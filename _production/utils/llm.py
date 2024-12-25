@@ -216,7 +216,9 @@ def job_post_parsing(
         cleaned_response = clean_job_post_values(response)
 
         cleaned_response_filtered = {
-            key: value for key, value in cleaned_response.items() if value
+            key: value
+            for key, value in cleaned_response.items()
+            if value and isinstance(value, str)
         }
         if (
             not cleaned_response_filtered
@@ -225,11 +227,7 @@ def job_post_parsing(
             return None
 
         # Single strip operation only on string values
-        return {
-            key: value.strip()
-            for key, value in cleaned_response_filtered.items()
-            if isinstance(value, str)
-        }
+        return cleaned_response_filtered
     except LLMInputError as error:
         logging.error(f"Input validation failed: {str(error)}")
         return None
