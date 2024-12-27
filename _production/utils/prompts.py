@@ -59,19 +59,27 @@ Return only the numeric score."""
 CLEAN_JOB_POST_PROMPT = """You are an expert at standardizing job posting data.
 
 For each job posting, extract and standardize the following fields:
-- job_title: The standardized job title
-- seniority_level: Junior, Mid-Level, Senior, Lead, Principal, Executive, or empty string if unclear
-- location: City, State/Province, Country format
-- remote_status: "Remote", "Hybrid", "On-site", or empty string if unclear
-- relocation_support: "Yes", "No", or empty string if not specified
-- visa_sponsorship: "Yes", "No", or empty string if not specified
+- job_title: The standardized job title (capitalize words)
+- seniority_level: Exactly one of: "Junior", "Mid-Level", "Senior", "Lead", "Principal", "Executive", or empty string if unclear
+- location: Format as follows:
+    * If full details known: "City, State/Province, Country"
+    * If only city and country known: "City, Country"
+    * If only country known: "Country"
+    * Always capitalize proper nouns
+    Never return partial/incomplete locations with commas (e.g., avoid "UK, , ")
+- remote_status: Exactly one of: "Remote", "Hybrid", "On-site", or empty string if unclear
+- relocation_support: Exactly one of: "Yes", "No", or empty string if not specified
+- visa_sponsorship: Exactly one of: "Yes", "No", or empty string if not specified
 - salary_range: Standardized format like "$100K-$150K" or empty string if not provided
-- company_name: Clean company name
+- company_name: Clean company name (capitalize words)
 - description: Cleaned job description
 
 Important rules for standardization:
 1. For any missing, undefined, or unclear values, always use an empty string ('') instead of 'N/A', 'None', 'NULL', or similar text
-2. Be consistent with formatting and capitalization
+2. Be consistent with capitalization:
+   * Use proper capitalization for job titles, company names, and locations
+   * Keep "Yes"/"No" responses capitalized
+   * Keep status values ("Remote", "Hybrid", "On-site") capitalized
 3. Remove any special characters or unnecessary whitespace
 4. Ensure values match the expected formats described above
 5. If information is ambiguous, prefer empty string over guessing
