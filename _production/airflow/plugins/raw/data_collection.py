@@ -1,5 +1,6 @@
 import datetime
 import logging
+from typing import Any, Dict, List
 
 from _production import DATA_BATCH_SIZE, RAW_DATA__TG_POSTS
 from _production.config.config import (
@@ -8,28 +9,34 @@ from _production.config.config import (
     TG_CLIENT,
 )
 from _production.config.config_db import RAW_DATA__TG_POSTS__COLUMNS
-from _production.utils.common import generate_hash, setup_logging
+from _production.utils.common import generate_hash, process_date, setup_logging
 from _production.utils.sql import batch_insert_to_db, fetch_from_db
-from _production.utils.text import clean_job_description, contains_keywords
+from _production.utils.text import (
+    clean_job_description,
+    contains_keywords,
+    is_duplicate_post,
+)
 from _production.utils.tg import get_channel_link_header
 
 setup_logging(__file__[:-3])
 
 
-def process_date(date):
-    """Convert date to UTC datetime without timezone info."""
-    if isinstance(date, datetime.datetime) and date.tzinfo is not None:
-        return date.astimezone(datetime.timezone.utc).replace(tzinfo=None)
-    return date if isinstance(date, datetime.datetime) else None
-
-
-def process_batch(results, table, columns, key_columns):
+def process_batch(
+    results: List[Dict[str, Any]],
+    table: str,
+    columns: List[str],
+    key_columns: List[str],
+) -> int:
     """Process and insert a batch of results."""
-    if not results:
-        return 0
-    batch_insert_to_db(table, columns, key_columns, results)
-    logging.info(f"Inserting batch of {len(results)} messages into database.")
-    return len(results)
+    try:
+        if not results:
+            return 0
+        batch_insert_to_db(table, columns, key_columns, results)
+        logging.info(f"Inserting batch of {len(results)} messages into database.")
+        return len(results)
+    except Exception as e:
+        logging.error(f"Error processing batch: {str(e)}")
+        raise
 
 
 def scrape_channel(tg_client, channel, last_date):
@@ -45,6 +52,13 @@ def scrape_channel(tg_client, channel, last_date):
 
     results, results_count = [], 0
 
+    # Fetch recent posts using fetch_from_db directly
+    recent_posts = fetch_from_db(
+        RAW_DATA__TG_POSTS,
+        select_condition="post",
+        where_condition="date >= NOW() - INTERVAL '30 days'",
+    )[1]
+
     for message in tg_client.iter_messages(
         entity=channel, reverse=True, offset_date=last_date
     ):
@@ -54,11 +68,23 @@ def scrape_channel(tg_client, channel, last_date):
             )
             continue
 
-        job_description_cleaned = clean_job_description(message.text)
+        job_description = message.text
+        job_description_cleaned = clean_job_description(job_description)
         if not contains_keywords(
             text=job_description_cleaned, keywords=DESIRED_KEYWORDS
         ):
             logging.info(f"Skipping message (no keywords) in channel: {channel}")
+            continue
+
+        # Check for duplicates
+        is_duplicate, existing_post, similarity_score = is_duplicate_post(
+            job_description, recent_posts
+        )
+        if is_duplicate:
+            logging.info(
+                f"Skipping duplicate message in channel: {channel}. "
+                f"Similarity score: {similarity_score}.\nCurrent post: {job_description}.\nExisting post: {existing_post}"
+            )
             continue
 
         message_link = f"{link_header}{message.id}".lower().strip()
@@ -109,12 +135,12 @@ def scrape_tg():
                     posts_collected = scrape_channel(
                         tg_client, channel, last_date_dict.get(channel)
                     )
-                except Exception as e:
+                except Exception as error:
                     raise Exception(
                         f"Failed to scrape channel {channel}. "
                         f"Posts collected: {posts_collected if 'posts_collected' in locals() else 0}. "
-                        f"Error: {str(e)}"
-                    ) from e
+                        f"Error: {str(error)}"
+                    ) from error
 
         except Exception:
             logging.error("Scraping process failed", exc_info=True)
