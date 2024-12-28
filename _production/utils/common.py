@@ -1,8 +1,10 @@
+import datetime
 import hashlib
 import logging
 import os
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from typing import Any, Optional, Union
 
 from dotenv import load_dotenv
 
@@ -96,3 +98,14 @@ def generate_hash(input_string: str) -> str:
     """
     hash_object = hashlib.sha256(input_string.encode())
     return hash_object.hexdigest()
+
+
+def process_date(date: Union[datetime.datetime, Any]) -> Optional[datetime.datetime]:
+    """Convert date to UTC datetime without timezone info."""
+    try:
+        if isinstance(date, datetime.datetime) and date.tzinfo is not None:
+            return date.astimezone(datetime.timezone.utc).replace(tzinfo=None)
+        return date if isinstance(date, datetime.datetime) else None
+    except Exception as e:
+        logging.error(f"Error processing date {date}: {str(e)}")
+        return None
