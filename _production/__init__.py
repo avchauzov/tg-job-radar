@@ -12,6 +12,9 @@ load_dotenv()
 DATABASE: Dict[str, str] = {
     "HOST": os.getenv("DB_HOST", ""),
     "NAME": os.getenv("DB_NAME", ""),
+    "TG_RECOMMENDATIONS_SUBSCRIPTIONS_NAME": os.getenv(
+        "DB_TG_RECOMMENDATIONS_SUBSCRIPTIONS_NAME", ""
+    ),
     "USER": os.getenv("DB_USER", ""),
     "PASSWORD": os.getenv("DB_PASSWORD", ""),
 }
