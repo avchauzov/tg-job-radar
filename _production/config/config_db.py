@@ -39,14 +39,14 @@ def generate_db_mappings():
         staging_to_prod = {
             "source_columns": [
                 "id",
-                "channel",
+                "username",
                 "created_at",
                 "post_link",
                 "post_structured",
             ],
             "target_columns": [
                 "id",
-                "channel",
+                "username",
                 "created_at",
                 "post_link",
                 "post_structured",
