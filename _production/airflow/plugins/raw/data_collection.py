@@ -39,10 +39,23 @@ def process_batch(
         raise
 
 
+def get_entity_title(entity):
+    """Get the title based on entity type."""
+    if hasattr(entity, "title") and entity.title:  # For channels
+        return entity.title
+    elif hasattr(entity, "first_name"):  # For users
+        full_name = entity.first_name or ""
+        if hasattr(entity, "last_name") and entity.last_name:
+            full_name += f" {entity.last_name}"
+        return full_name.strip()
+    return str(entity.id)  # Fallback to entity ID
+
+
 def scrape_channel(tg_client, channel, last_date):
     """Scrape a single channel and return the number of processed messages."""
     entity = tg_client.get_entity(channel)
     link_header = get_channel_link_header(entity)
+    entity_title = get_entity_title(entity)
 
     if not last_date:
         last_date = datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=30)
@@ -90,7 +103,7 @@ def scrape_channel(tg_client, channel, last_date):
         message_link = f"{link_header}{message.id}".lower().strip()
         result = {
             "id": generate_hash(message_link),
-            "channel": channel,
+            "username": entity_title,
             "post": message.text,
             "date": process_date(message.date),
             "created_at": datetime.datetime.now(datetime.UTC),
@@ -123,8 +136,8 @@ def scrape_tg():
             # Fetch last dates
             _, last_date = fetch_from_db(
                 RAW_DATA__TG_POSTS,
-                "channel, max(date) as date",
-                group_by_condition="channel",
+                "username, max(date) as date",
+                group_by_condition="username",
                 order_by_condition="date desc",
             )
             last_date_dict = dict(last_date)
