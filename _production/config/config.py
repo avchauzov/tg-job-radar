@@ -8,10 +8,12 @@ from telethon.sessions import StringSession
 from telethon.sync import TelegramClient
 
 from _production import (
+    DATABASE,
     OPENAI_API_KEY,
     TELEGRAM,
 )
 from _production.utils.common import get_correct_path, setup_logging
+from _production.utils.sql import fetch_from_db
 from _production.utils.tg import create_session_string
 
 setup_logging(__file__[:-3])
@@ -45,11 +47,30 @@ def load_config():
     try:
         with open(config_path) as file:
             file_config = json.load(file)
-    except json.JSONDecodeError as e:
-        raise ValueError(f"Invalid JSON in config file: {e}")
+    except json.JSONDecodeError as error:
+        raise ValueError(f"Invalid JSON in config file: {error}")
     except FileNotFoundError:
         logging.warning(f"Config file not found at {config_path}, using defaults")
         file_config = {}
+
+    # Fetch channels from database
+    try:
+        _, db_channels = fetch_from_db(
+            "raw_data.current_channels",
+            select_condition="username",
+            where_condition="channel_group = 'jobs' and username is not null",
+            database=DATABASE["TG_RECOMMENDATIONS_SUBSCRIPTIONS_NAME"],
+        )
+        # Convert tuple results to list of channel names
+        db_channel_list = [channel[0] for channel in db_channels]
+
+        # Combine channels from config file with channels from database
+        file_config["source_channels"] = list(
+            set(file_config.get("source_channels", []) + db_channel_list)
+        )
+        logging.info(f"Added {len(db_channel_list)} channels from database")
+    except Exception as error:
+        logging.error(f"Failed to fetch channels from database: {error}")
 
     return file_config, config_path
 
