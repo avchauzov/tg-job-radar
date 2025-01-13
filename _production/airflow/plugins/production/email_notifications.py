@@ -41,7 +41,9 @@ def fetch_new_posts() -> Optional[pd.DataFrame]:
     """
     try:
         columns, new_posts = fetch_from_db(
-            PROD_DATA__JOBS, select_condition="*", where_condition="notificated = FALSE"
+            PROD_DATA__JOBS,
+            select_condition="DISTINCT ON (post_structured) *",
+            where_condition="notificated = FALSE",
         )
 
         if not new_posts:
