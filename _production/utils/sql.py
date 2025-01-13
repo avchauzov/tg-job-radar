@@ -65,13 +65,13 @@ def with_retry(max_retries=MAX_RETRIES, delay=RETRY_DELAY):
 
 
 @contextmanager
-def establish_db_connection():
+def establish_db_connection(database=DATABASE["NAME"]):
     """Creates and manages a database connection with proper error handling"""
     connection = None
     try:
         connection = psycopg2.connect(
             host=DATABASE["HOST"],
-            database=DATABASE["NAME"],
+            database=database,
             user=DATABASE["USER"],
             password=DATABASE["PASSWORD"],
             port=5432,
@@ -178,7 +178,7 @@ def batch_update_to_db(table_name, update_columns, condition_column, data):
         raise
 
 
-def execute_query(query: str) -> tuple[list, list]:
+def execute_query(query: str, database: str = DATABASE["NAME"]) -> tuple[list, list]:
     """
     Execute a SQL query and return results.
 
@@ -190,7 +190,7 @@ def execute_query(query: str) -> tuple[list, list]:
         and data is a list of tuples containing the row values
     """
     try:
-        with establish_db_connection() as connection:
+        with establish_db_connection(database) as connection:
             with connection.cursor() as cursor:
                 cursor.execute(query)
                 if cursor.description is None:
@@ -211,6 +211,7 @@ def fetch_from_db(
     group_by_condition: str | None = None,
     order_by_condition: str | None = None,
     random_limit: int | None = None,
+    database: str = DATABASE["NAME"],
 ) -> tuple[list, list]:
     """
     Fetch data from database table.
@@ -241,7 +242,7 @@ def fetch_from_db(
         if random_limit:
             query += f" ORDER BY RANDOM() LIMIT {random_limit}"
 
-        return execute_query(query)
+        return execute_query(query, database)
 
     except Exception:
         logging.error("Database fetch failed", exc_info=True)
@@ -288,7 +289,7 @@ def move_data_with_condition(
             f"SELECT {select_condition} FROM {source_table} WHERE {where_condition};"
         )
 
-        logging.info(f"Executing select query: {select_query}")
+        # logging.info(f"Executing select query: {select_query}")
 
         with establish_db_connection() as connection:
             with connection.cursor() as cursor:
@@ -321,7 +322,7 @@ def move_data_with_condition(
                     serialized_data.append(tuple(serialized_row))
 
                 placeholders = ", ".join(["%s"] * len(column_names))
-                insert_query = f'INSERT INTO {target_table} ({", ".join(column_names)}) VALUES ({placeholders})'
+                insert_query = f"INSERT INTO {target_table} ({', '.join(column_names)}) VALUES ({placeholders})"
 
                 logging.info(
                     f"Inserting {len(serialized_data)} records into {target_table}."
