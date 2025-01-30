@@ -3,14 +3,11 @@ import logging
 import time
 from typing import Any, Dict, List, Optional, Type, TypeVar
 
-from openai.types.chat import (
-    ChatCompletionSystemMessageParam,
-    ChatCompletionUserMessageParam,
-)
+import instructor
 from pydantic import BaseModel
 
 from _production import LLM_BASE_MODEL
-from _production.config.config import OPENAI_CLIENT
+from _production.config.config import ANTHROPIC_CLIENT
 from _production.utils.exceptions import (
     LLMError,
     LLMInputError,
@@ -28,6 +25,9 @@ from _production.utils.prompts import (
 T = TypeVar("T", bound=BaseModel)
 
 MAX_TEXT_LENGTH = 64000
+
+# Initialize instructor-wrapped client
+ANTHROPIC_CLIENT_STRUCTURED = instructor.from_anthropic(ANTHROPIC_CLIENT)
 
 
 class CleanJobPost(BaseModel):
@@ -69,29 +69,30 @@ def _make_llm_call(
     max_retries: int = 3,
     sleep_time: int = 10,
 ) -> Optional[T]:
-    """Make OpenAI API calls with retry logic"""
+    """Make Anthropic API calls with retry logic"""
+    system_message = next(
+        (msg["content"] for msg in messages if msg["role"] == "system"), ""
+    )
+    user_message = next(
+        (msg["content"] for msg in messages if msg["role"] == "user"), ""
+    )
+
     for attempt in range(max_retries):
         try:
-            response = OPENAI_CLIENT.beta.chat.completions.parse(
+            response = ANTHROPIC_CLIENT_STRUCTURED.messages.create(
                 model=LLM_BASE_MODEL,
-                messages=[
-                    ChatCompletionSystemMessageParam(
-                        role="system", content=msg["content"]
-                    )
-                    if msg["role"] == "system"
-                    else ChatCompletionUserMessageParam(
-                        role="user", content=msg["content"]
-                    )
-                    for msg in messages
-                ],
+                system=system_message,
+                messages=[{"role": "user", "content": user_message}],
+                max_tokens=1024,
                 temperature=0.0,
-                response_format=response_format,
+                response_model=response_format,
             )
+
             logging.info(f"Successful LLM call after {attempt + 1} attempts")
-            return response.choices[0].message.parsed
+            return response
 
         except Exception as error:
-            if "Too Many Requests" in str(error):
+            if "rate_limit" in str(error).lower():
                 logging.warning(
                     f"Rate limit hit. Retrying in {sleep_time} seconds... (Attempt {attempt + 1}/{max_retries})"
                 )
@@ -276,3 +277,73 @@ def clean_job_post_values(response: Dict[str, Any]) -> Dict[str, Any]:
             company_name=None,
             description=None,
         ).model_dump()
+
+
+if __name__ == "__main__":
+    # Test data
+    sample_cv = """
+    John Doe
+    Software Engineer
+
+    Experience:
+    - 5 years Python development
+    - Backend architecture and API design
+    - Team leadership experience
+
+    Skills: Python, Django, FastAPI, PostgreSQL, Redis
+    """
+
+    sample_job_post = """
+    Senior Software Engineer
+
+    Company: Tech Corp
+    Location: San Francisco, CA
+
+    We're looking for a Senior Python Developer with:
+    - 5+ years experience
+    - Strong backend development skills
+    - Leadership abilities
+
+    Salary: $150k-$180k
+    Remote: Hybrid
+    Visa: Available
+    """
+
+    # Test all functions
+    print("\n=== Testing job_post_detection ===")
+    result = job_post_detection(sample_job_post)
+    print(f"Is job post: {result}")
+
+    print("\n=== Testing single_job_post_detection ===")
+    result = single_job_post_detection(sample_job_post)
+    print(f"Is single job post: {result}")
+
+    print("\n=== Testing match_cv_with_job ===")
+    match_score = match_cv_with_job(sample_cv, sample_job_post)
+    print(f"CV match score: {match_score}")
+
+    print("\n=== Testing job_post_parsing ===")
+    parsed_job = job_post_parsing(sample_job_post)
+    print("Parsed job post:")
+    if parsed_job:
+        for key, value in parsed_job.items():
+            print(f"{key}: {value}")
+    else:
+        print("Failed to parse job post")
+
+    print("\n=== Testing clean_job_post_values ===")
+    sample_response = {
+        "job_title": "Senior Software Engineer",
+        "location": "San Francisco, CA",
+        "remote_status": "hybrid",
+        "salary_range": "$150k-$180k",
+        "company_name": "Tech Corp",
+        "description": "We're looking for a Senior Python Developer",
+        "seniority_level": "Senior",
+        "visa_sponsorship": True,
+        "relocation_support": None,
+    }
+    cleaned = clean_job_post_values(sample_response)
+    print("Cleaned job post:")
+    for key, value in cleaned.items():
+        print(f"{key}: {value}")
