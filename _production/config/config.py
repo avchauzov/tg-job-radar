@@ -3,13 +3,13 @@ import logging
 import sys
 from functools import lru_cache
 
-import openai
+import anthropic
 from telethon.sessions import StringSession
 from telethon.sync import TelegramClient
 
 from _production import (
+    ANTHROPIC_API_KEY,
     DATABASE,
-    OPENAI_API_KEY,
     TELEGRAM,
 )
 from _production.utils.common import get_correct_path, setup_logging
@@ -18,21 +18,18 @@ from _production.utils.tg import create_session_string
 
 setup_logging(__file__[:-3])
 
-# OpenAI client initialization
+# Anthropic client initialization
 try:
-    if OPENAI_API_KEY:
-        OPENAI_CLIENT = openai.OpenAI(api_key=OPENAI_API_KEY)
-        openai._utils._logs.logger.setLevel(logging.WARNING)
-        openai._utils._logs.httpx_logger.setLevel(logging.WARNING)
-
+    if ANTHROPIC_API_KEY:
+        ANTHROPIC_CLIENT = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     else:
-        logging.error("OpenAI API key not set")
+        logging.error("Anthropic API key not set")
         raise ValueError(
-            "OpenAI API key is not set. Please set the OPENAI_API_KEY environment variable."
+            "Anthropic API key is not set. Please set the ANTHROPIC_API_KEY environment variable."
         )
 
 except Exception:
-    logging.error("Failed to initialize OpenAI client", exc_info=True)
+    logging.error("Failed to initialize Anthropic client", exc_info=True)
     raise
 
 
