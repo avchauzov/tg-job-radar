@@ -19,7 +19,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from _production import DATA_BATCH_SIZE, EMAIL, PROD_DATA__JOBS, STAGING_DATA__POSTS
 from _production.config.config_db import STAGING_TO_PROD__SELECT, STAGING_TO_PROD__WHERE
 from _production.utils.common import setup_logging
-from _production.utils.email import format_email_content, send_email
+from _production.utils.email_handler import format_email_content, send_email
 from _production.utils.sql import (
     batch_update_to_db,
     fetch_from_db,
