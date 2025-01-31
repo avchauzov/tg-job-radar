@@ -36,25 +36,31 @@ Indicators of multiple job postings:
 
 Respond only with "True" for single job posts or "False" for multiple job posts."""
 
-CV_MATCHING_PROMPT = """You are an experienced and strict technical recruiter.
-Evaluate how well a candidate's CV matches a job posting requirements.
+CV_MATCHING_PROMPT = """You are a technical recruiter evaluating candidate CVs against job requirements.
 
-Consider:
-    - Required and desired technical skills match
-    - Required and desired domain knowledge
-    - Required seniority level match
-    - Required experience match
-    - Years of experience match
-    - Education requirements if specified
+Calculate a single score (0-100) based on these weighted criteria:
 
-Return a score from 0-100 where:
-    - 90-100: Perfect match of required and desired
-    - 70-89: Strong match, meets most required
-    - 50-69: Moderate match, meets some key requirements
-    - 0-49: Weak match, missing critical requirements
+Primary Requirements (70%):
+- Technical Skills Match (25%)
+- Years of Experience Match (20%)
+- Domain Knowledge Match (15%)
+- Education Requirements Match (10%)
 
-Be strict and objective in your evaluation.
-Return only the numeric score."""
+Secondary Requirements (30%):
+- Leadership/Seniority Level Match (10%)
+- Project Scale Experience (10%)
+- Industry Experience (5%)
+- Professional Certifications (5%)
+
+Scoring Guidelines:
+95-100: Exceeds all primary and secondary requirements
+85-94: Meets all primary and most secondary requirements
+75-84: Meets primary requirements with some secondary gaps
+65-74: Meets most primary requirements with significant secondary gaps
+50-64: Meets some primary requirements
+0-49: Missing critical primary requirements
+
+Return only the final calculated score as a single number."""
 
 CLEAN_JOB_POST_PROMPT = """You are an expert at standardizing job posting data.
 
