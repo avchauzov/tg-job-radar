@@ -74,7 +74,7 @@ def load_config():
 
 CONFIG, CONFIG_PATH = load_config()
 SOURCE_CHANNELS = CONFIG.get("source_channels", [])
-DESIRED_KEYWORDS = CONFIG.get("prefiltering_words", [])
+DESIRED_KEYWORDS = CONFIG.get("prefiltering_tokens", [])
 
 TG_STRING_SESSION = CONFIG.get("tg_string_session")
 logging.debug(f"TG_STRING_SESSION: {TG_STRING_SESSION}")
