@@ -43,8 +43,8 @@ URL_REMOVAL_PATTERN: Pattern = re.compile(r"(https?://\S+|www\.\S+)")
 
 # Constants with type hints
 DATE_FORMAT: str = "%Y-%m-%d %H:%M:%S"
-TEXT_SIMILARITY_THRESHOLD: float = 0.95
-MATCH_SCORE_THRESHOLD: int = 75  # Value between 0-100
+TEXT_SIMILARITY_THRESHOLD: float = 0.90
+MATCH_SCORE_THRESHOLD: int = 85  # Value between 0-100
 
 DATA_BATCH_SIZE = 32
 NUMBER_OF_BATCHES = 32
