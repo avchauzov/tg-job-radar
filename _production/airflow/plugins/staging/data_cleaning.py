@@ -20,11 +20,11 @@ from _production.config.config_db import (
     RAW_TO_STAGING__WHERE,
     STAGING_DATA__POSTS__COLUMNS,
 )
+from _production.utils.agents import enhanced_cv_matching
 from _production.utils.common import setup_logging
 from _production.utils.llm import (
     job_post_detection,
     job_post_parsing,
-    match_cv_with_job,
     single_job_post_detection,
 )
 from _production.utils.sql import batch_insert_to_db, fetch_from_db
@@ -86,44 +86,46 @@ def fetch_cv_content(doc_id: str) -> Optional[str]:
 
 
 def process_batch(batch_df: pd.DataFrame, cv_content: str) -> Optional[pd.DataFrame]:
-    """
-    Process a single batch of data.
-
-    Args:
-        batch_df: DataFrame containing the batch to process
-        cv_content: Content of the CV to match against
-
-    Returns:
-        Optional[pd.DataFrame]: Processed DataFrame or None if processing fails
-    """
     try:
+        # Initialize columns with appropriate default values
+        batch_df.loc[:, "is_job_post"] = False
+        batch_df.loc[:, "is_single_job_post"] = False
+        batch_df.loc[:, "score"] = 0
+        batch_df.loc[:, "post_structured"] = "{}"
+
         # Job post detection
-        batch_df.loc[:, "is_job_post"] = batch_df["post"].apply(job_post_detection)
-        if batch_df.empty:
-            return None
+        job_post_mask = batch_df["post"].apply(job_post_detection)
+        batch_df.loc[job_post_mask, "is_job_post"] = True
 
-        # Single job post detection
-        batch_df.loc[:, "is_single_job_post"] = batch_df[
-            batch_df["is_job_post"].notna()
-        ]["post"].apply(single_job_post_detection)
+        # Single job post detection - only for confirmed job posts
+        single_post_mask = (batch_df["is_job_post"]) & (
+            batch_df[batch_df["is_job_post"]]["post"].apply(single_job_post_detection)
+        )
+        batch_df.loc[single_post_mask, "is_single_job_post"] = True
 
-        # Match score calculation
-        batch_df.loc[:, "score"] = batch_df[batch_df["is_single_job_post"].notna()][
-            "post"
-        ].apply(lambda x: match_cv_with_job(cv_content, x))
-
-        # Post parsing
-        batch_df.loc[:, "post_structured"] = batch_df[batch_df["score"].notna()].apply(
-            lambda row: json.dumps(job_post_parsing(row["post"]))
-            if row["is_single_job_post"] and row["score"] >= MATCH_SCORE_THRESHOLD
-            else json.dumps({}),
-            axis=1,
+        # Match score calculation - only for single job posts
+        score_mask = batch_df["is_single_job_post"] & batch_df["is_job_post"]
+        batch_df.loc[score_mask, "score"] = batch_df.loc[score_mask, "post"].apply(
+            lambda post: enhanced_cv_matching(cv_content, post) or 0
         )
 
+        # Post parsing - only for posts meeting all criteria
+        parsing_mask = (
+            batch_df["is_single_job_post"]
+            & batch_df["is_job_post"]
+            & (batch_df["score"] >= MATCH_SCORE_THRESHOLD)
+        )
+        batch_df.loc[parsing_mask, "post_structured"] = batch_df.loc[
+            parsing_mask, "post"
+        ].apply(lambda post: json.dumps(job_post_parsing(post)))
+
+        # Set timestamp
         batch_df.loc[:, "created_at"] = pd.Timestamp(
             datetime.datetime.now(datetime.UTC)
         ).tz_localize(None)
-        return batch_df[batch_df["post_structured"].notna()]
+
+        # Return only rows with valid structured posts
+        return batch_df[batch_df["post_structured"] != "{}"]
 
     except Exception as error:
         logging.error(f"Error processing batch: {str(error)}", exc_info=True)
