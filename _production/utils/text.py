@@ -1,34 +1,29 @@
 import logging
 import re
 from difflib import SequenceMatcher
-from typing import List, Pattern
+from typing import List
 
 from _production import TEXT_SIMILARITY_THRESHOLD
 
 
-def contains_keywords(
-    text: str, keywords: List[str], patterns: List[Pattern[str] | None] | None = None
-) -> bool:
+def contains_keywords(text: str, keywords: List[str] = []) -> bool:
     """Check if any keywords appear in the given text.
 
     Args:
-        text: The input text to search for keywords
-        keywords: List of keywords to search for
-        patterns: Pre-compiled regex patterns (optional)
+        text (str): The input text to search for keywords
+        keywords (List[str], optional): List of keywords to search for. Defaults to empty list.
 
     Returns:
-        bool: True if any keyword is found
+        bool: True if any keyword is found in the text, False otherwise
+
+    Raises:
+        TypeError: If text is not a string
+        re.error: If there's an error in regex pattern
     """
     try:
-        if not isinstance(text, str):
-            raise TypeError(f"Expected string input, got {type(text)}")
-
-        if patterns is None:
-            patterns = [re.compile(r"\b" + re.escape(kw) + r"\b") for kw in keywords]
-
         text_cleaned = re.sub(r"[^a-zA-Zа-яА-ЯёЁ\s]+|\s+", " ", text).lower().strip()
 
-        return any(pattern and pattern.search(text_cleaned) for pattern in patterns)
+        return any(keyword in text_cleaned for keyword in keywords)
 
     except re.error as regex_error:
         logging.error(f"Regex error in contains_keywords: {regex_error}")
