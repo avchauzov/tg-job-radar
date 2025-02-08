@@ -137,9 +137,9 @@ def batch_insert_to_db(
             with connection.cursor() as cursor:
                 execute_batch(cursor, db_insert_query, data_tuples)
             connection.commit()
-    except Exception as e:
+    except Exception as error:
         logging.error("Error inserting data", exc_info=True)
-        raise DatabaseError(f"Insert operation failed: {str(e)}")
+        raise DatabaseError(f"Insert operation failed: {str(error)}")
 
 
 def batch_update_to_db(table_name, update_columns, condition_column, data):
