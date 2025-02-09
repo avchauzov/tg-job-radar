@@ -88,7 +88,8 @@ def _make_llm_call(
                 response_model=response_format,
             )
 
-            logging.info(f"Successful LLM call after {attempt + 1} attempts")
+            if attempt > 0:  # Only log if we had to retry
+                logging.info(f"Successful LLM call after {attempt + 1} attempts")
             return response
 
         except Exception as error:
@@ -100,7 +101,7 @@ def _make_llm_call(
                 if attempt == max_retries - 1:
                     raise LLMRateLimitError("Rate limit exceeded after max retries")
             else:
-                logging.error("Error in LLM call", exc_info=True)
+                logging.error(f"LLM call failed: {str(error)}")
                 raise LLMError(f"LLM call failed: {str(error)}")
 
     return None
