@@ -56,7 +56,7 @@ def load_config():
             "raw_data.current_channels",
             select_condition="username",
             where_condition="channel_group = 'jobs' and username is not null",
-            database=DATABASE["TG_RECOMMENDATIONS_SUBSCRIPTIONS_NAME"],
+            database=DATABASE["DB_TELEFLOW_NAME"],
         )
         # Convert tuple results to list of channel names
         db_channel_list = [channel[0] for channel in db_channels]
