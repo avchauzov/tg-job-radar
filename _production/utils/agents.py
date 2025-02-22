@@ -46,6 +46,10 @@ def create_cv_matching_agent(cv_content: str):
     def analyze_experience_match(job_post: str) -> Dict[str, float]:
         """Analyze experience match between CV and job post"""
         try:
+            # Ensure job_post is a string
+            if isinstance(job_post, (list, tuple)):
+                job_post = " ".join(str(item) for item in job_post)
+
             response = llm.invoke(
                 f"""You are a technical recruiter evaluating candidate CVs against job requirements.
 
@@ -78,6 +82,10 @@ def create_cv_matching_agent(cv_content: str):
     def analyze_skills_match(job_post: str) -> Dict[str, float]:
         """Analyze technical skills match between CV and job post"""
         try:
+            # Ensure job_post is a string
+            if isinstance(job_post, (list, tuple)):
+                job_post = " ".join(str(item) for item in job_post)
+
             response = llm.invoke(
                 f"""You are a technical recruiter evaluating candidate CVs against job requirements.
 
@@ -111,6 +119,10 @@ def create_cv_matching_agent(cv_content: str):
     def analyze_soft_skills_match(job_post: str) -> Dict[str, float]:
         """Analyze soft skills and cultural fit"""
         try:
+            # Ensure job_post is a string
+            if isinstance(job_post, (list, tuple)):
+                job_post = " ".join(str(item) for item in job_post)
+
             response = llm.invoke(
                 f"""You are a technical recruiter evaluating candidate CVs against job requirements.
 
@@ -164,47 +176,48 @@ def enhanced_cv_matching(cv_content: str, job_post: str) -> Optional[float]:
         result = agent.invoke(
             {
                 "input": f"""Analyze this job post for compatibility with the CV.
-            Use the tools to evaluate matches, then calculate final score with these weights:
-            - Skills Match (45%): Technical skills, education, tools, certifications
-            - Experience Match (40%): Years, domain knowledge, project scale
-            - Soft Skills Match (15%): Communication, teamwork, culture fit
+                Use these tools one at a time to evaluate matches:
+                1. First use analyze_experience_match with just the job post text
+                2. Then use analyze_skills_match with just the job post text
+                3. Finally use analyze_soft_skills_match with just the job post text
 
-            Score Guidelines:
-            95-100: Exceeds all primary and secondary requirements
-            85-94: Meets all primary and most secondary requirements
-            75-84: Meets primary requirements with some secondary gaps
-            65-74: Meets most primary requirements with significant secondary gaps
-            50-64: Meets some primary requirements
-            0-49: Missing critical primary requirements
+                After getting all scores, calculate the final score with these weights:
+                - Skills Match (45%): Technical skills, education, tools, certifications
+                - Experience Match (40%): Years, domain knowledge, project scale
+                - Soft Skills Match (15%): Communication, teamwork, culture fit
 
-            Provide your final response as a JSON object with this structure:
-            {{
-                "experience_match": {{ "score": number}},
-                "skills_match": {{ "score": number}},
-                "soft_skills_match": {{ "score": number}}
-            }}
+                Provide your final response in this exact JSON format:
+                {{
+                    "experience_match": {{"score": <number>}},
+                    "skills_match": {{"score": <number>}},
+                    "soft_skills_match": {{"score": <number>}}
+                }}
 
-            Job Post: {job_post}""",
+                Job Post: {job_post}""",
                 "chat_history": [],
             }
         )
 
         if isinstance(result, dict) and "output" in result:
-            analysis = result["output"]
+            try:
+                experience_score = float(result["output"]["experience_match"]["score"])
+                skills_score = float(result["output"]["skills_match"]["score"])
+                soft_skills_score = float(
+                    result["output"]["soft_skills_match"]["score"]
+                )
 
-            # Extract scores
-            experience_score = float(analysis["experience_match"]["score"])
-            skills_score = float(analysis["skills_match"]["score"])
-            soft_skills_score = float(analysis["soft_skills_match"]["score"])
+                # Calculate weighted final score
+                final_score = int(
+                    (skills_score * 0.45)
+                    + (experience_score * 0.40)
+                    + (soft_skills_score * 0.15)
+                )
 
-            # Calculate weighted final score
-            final_score = int(
-                (skills_score * 0.45)
-                + (experience_score * 0.40)
-                + (soft_skills_score * 0.15)
-            )
+                return final_score
 
-            return final_score
+            except Exception as error:
+                logging.error(f"Failed to parse agent output: {str(error)}")
+                return None
 
         return None
 
