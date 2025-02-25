@@ -32,7 +32,7 @@ def parse_llm_response(response: str | list) -> Dict:
             logging.error(f"No JSON object found in response: {response}")
             return {"score": 0, "reasoning": "No valid JSON found in response"}
 
-    except Exception as error:
+    except (json.JSONDecodeError, ValueError) as error:
         logging.error(f"Failed to parse LLM response: {response}")
         return {"score": 0, "reasoning": f"Error parsing response: {str(error)}"}
 
@@ -66,9 +66,10 @@ def create_cv_matching_agent(cv_content: str):
                 50-64: Meets some requirements
                 0-49: Missing critical requirements
 
-                Provide your response in this exact JSON format:
+                IMPORTANT: Calculate the final numeric score yourself. Do not include any mathematical expressions.
+                Provide your response in this exact JSON format, with only a number for the score:
                 {{
-                    "score": <number between 0-100>
+                    "score": 85
                 }}
 
                 CV: {cv_content}
@@ -103,9 +104,10 @@ def create_cv_matching_agent(cv_content: str):
                 50-64: Meets some requirements
                 0-49: Missing critical requirements
 
-                Provide your response in this exact JSON format:
+                IMPORTANT: Calculate the final numeric score yourself. Do not include any mathematical expressions.
+                Provide your response in this exact JSON format, with only a number for the score:
                 {{
-                    "score": <number between 0-100>
+                    "score": 90
                 }}
 
                 CV: {cv_content}
@@ -132,9 +134,10 @@ def create_cv_matching_agent(cv_content: str):
                 - Problem-Solving Approach (20%): Analytical and solution-oriented mindset
                 - Cultural Values Alignment (20%): Work style and company culture fit
 
-                Provide your response in this exact JSON format:
+                IMPORTANT: Calculate the final numeric score yourself. Do not include any mathematical expressions.
+                Provide your response in this exact JSON format, with only a number for the score:
                 {{
-                    "score": <number between 0-100>
+                    "score": 88
                 }}
 
                 CV: {cv_content}
@@ -164,7 +167,11 @@ def create_cv_matching_agent(cv_content: str):
     ]
 
     return initialize_agent(
-        tools, llm, agent=AgentType.CHAT_CONVERSATIONAL_REACT_DESCRIPTION, verbose=True
+        tools,
+        llm,
+        agent=AgentType.CHAT_CONVERSATIONAL_REACT_DESCRIPTION,
+        verbose=True,
+        handle_parsing_errors=True,  # Add error handling for parsing issues
     )
 
 
@@ -186,11 +193,12 @@ def enhanced_cv_matching(cv_content: str, job_post: str) -> Optional[float]:
                 - Experience Match (40%): Years, domain knowledge, project scale
                 - Soft Skills Match (15%): Communication, teamwork, culture fit
 
-                Provide your final response in this exact JSON format:
+                IMPORTANT: Calculate all numeric values yourself. Do not include any mathematical expressions.
+                Provide your final response in this exact JSON format, with only numbers for scores:
                 {{
-                    "experience_match": {{"score": <number>}},
-                    "skills_match": {{"score": <number>}},
-                    "soft_skills_match": {{"score": <number>}}
+                    "experience_match": {{"score": 85}},
+                    "skills_match": {{"score": 90}},
+                    "soft_skills_match": {{"score": 88}}
                 }}
 
                 Job Post: {job_post}""",
@@ -198,29 +206,34 @@ def enhanced_cv_matching(cv_content: str, job_post: str) -> Optional[float]:
             }
         )
 
-        if isinstance(result, dict) and "output" in result:
-            try:
-                experience_score = float(result["output"]["experience_match"]["score"])
-                skills_score = float(result["output"]["skills_match"]["score"])
-                soft_skills_score = float(
-                    result["output"]["soft_skills_match"]["score"]
-                )
+        # Enhanced error handling for result parsing
+        if not isinstance(result, dict) or "output" not in result:
+            logging.error(f"Unexpected agent output format: {result}")
+            return None
 
-                # Calculate weighted final score
-                final_score = int(
-                    (skills_score * 0.45)
-                    + (experience_score * 0.40)
-                    + (soft_skills_score * 0.15)
-                )
+        try:
+            output_data = result["output"]
+            if isinstance(output_data, str):
+                # Try to extract JSON if the output is a string
+                output_data = parse_llm_response(output_data)
 
-                return final_score
+            experience_score = float(output_data["experience_match"]["score"])
+            skills_score = float(output_data["skills_match"]["score"])
+            soft_skills_score = float(output_data["soft_skills_match"]["score"])
 
-            except Exception as error:
-                logging.error(f"Failed to parse agent output: {str(error)}")
-                return None
+            # Calculate weighted final score
+            final_score = int(
+                (skills_score * 0.45)
+                + (experience_score * 0.40)
+                + (soft_skills_score * 0.15)
+            )
 
-        return None
+            return final_score
 
-    except Exception as error:
-        logging.error(f"Enhanced CV matching failed: {str(error)}")
+        except (KeyError, ValueError, TypeError) as error:
+            logging.error(f"Failed to parse agent output structure: {str(error)}")
+            return None
+
+    except (LLMError, ValueError, RuntimeError) as error:
+        logging.error("Enhanced CV matching failed: %s", str(error))
         return None
