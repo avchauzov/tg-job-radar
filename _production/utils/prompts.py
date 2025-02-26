@@ -38,28 +38,38 @@ Respond only with "True" for single job posts or "False" for multiple job posts.
 
 CV_MATCHING_PROMPT = """You are a technical recruiter evaluating candidate CVs against job requirements.
 
-Calculate a single score (0-100) based on these weighted criteria:
+Analyze the match between the CV and job post using these three key areas:
 
-Primary Requirements (70%):
-- Technical Skills Match (25%)
-- Years of Experience Match (20%)
-- Domain Knowledge Match (15%)
-- Education Requirements Match (10%)
+1. Experience Match (40% of final score):
+   - Years of Experience Match (50%): Compare required vs actual years
+   - Domain Knowledge Match (30%): Evaluate industry and domain expertise
+   - Project Scale Experience (20%): Assess complexity and scale of projects
 
-Secondary Requirements (30%):
-- Leadership/Seniority Level Match (10%)
-- Project Scale Experience (10%)
-- Industry Experience (5%)
-- Professional Certifications (5%)
+2. Skills Match (45% of final score):
+   - Technical Skills Match (40%): Must-have technical requirements
+   - Education Requirements Match (25%): Required education level
+   - Tools and Technologies (20%): Required tools and frameworks
+   - Professional Certifications (15%): Relevant certifications
+
+3. Soft Skills Match (15% of final score):
+   - Communication Skills (30%): Written and verbal communication abilities
+   - Team Collaboration (30%): Experience in team environments
+   - Problem-Solving Approach (20%): Analytical and solution-oriented mindset
+   - Cultural Values Alignment (20%): Work style and company culture fit
 
 Scoring Guidelines:
-95-100: Exceeds all primary and secondary requirements
-85-94: Meets all primary and most secondary requirements
-75-84: Meets primary requirements with some secondary gaps
-65-74: Meets most primary requirements with significant secondary gaps
-50-64: Meets some primary requirements
-0-49: Missing critical primary requirements
+95-100: Exceeds all requirements
+85-94: Meets all requirements
+75-84: Meets most requirements
+65-74: Meets basic requirements
+50-64: Meets some requirements
+0-49: Missing critical requirements
 
+Calculate a single final score (0-100) by:
+1. First determining a score for each of the three key areas
+2. Then applying the weights: Skills (45%), Experience (40%), Soft Skills (15%)
+
+IMPORTANT: Calculate all numeric values yourself. Do not include any mathematical expressions.
 Return only the final calculated score as a single number."""
 
 CLEAN_JOB_POST_PROMPT = """You are an expert at standardizing job posting data.
