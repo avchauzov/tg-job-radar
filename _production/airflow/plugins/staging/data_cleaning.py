@@ -25,6 +25,7 @@ from _production.utils.common import setup_logging
 from _production.utils.llm import (
     job_post_detection,
     job_post_parsing,
+    match_cv_with_job,
     single_job_post_detection,
 )
 from _production.utils.sql import batch_insert_to_db, fetch_from_db
@@ -103,11 +104,19 @@ def process_batch(batch_df: pd.DataFrame, cv_content: str) -> Optional[pd.DataFr
         )
         batch_df.loc[single_post_mask, "is_single_job_post"] = True
 
-        # Match score calculation - only for single job posts
-        score_mask = batch_df["is_single_job_post"] & batch_df["is_job_post"]
-        batch_df.loc[score_mask, "score"] = batch_df.loc[score_mask, "post"].apply(
-            lambda post: enhanced_cv_matching(cv_content, post) or 0
-        )
+        # First pass: Quick scoring with optimized function
+        score_mask_simple = batch_df["is_single_job_post"] & batch_df["is_job_post"]
+        batch_df.loc[score_mask_simple, "score"] = batch_df.loc[
+            score_mask_simple, "post"
+        ].apply(lambda post: match_cv_with_job(cv_content, post) or 0)
+
+        # Second pass: Detailed scoring for promising candidates
+        score_mask_advanced = (
+            batch_df["is_single_job_post"] & batch_df["is_job_post"]
+        ) & (batch_df["score"] >= MATCH_SCORE_THRESHOLD)
+        batch_df.loc[score_mask_advanced, "score"] = batch_df.loc[
+            score_mask_advanced, "post"
+        ].apply(lambda post: enhanced_cv_matching(cv_content, post) or 0)
 
         # Post parsing - only for posts meeting all criteria
         parsing_mask = (
