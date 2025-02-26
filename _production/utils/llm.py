@@ -152,13 +152,17 @@ def single_job_post_detection(post, max_retries=3, sleep_time=10):
 def match_cv_with_job(
     cv_text: str, post: str, max_retries: int = 3, sleep_time: int = 10
 ) -> Optional[float]:
-    """Evaluates match between CV and job post"""
+    """Evaluates match between CV and job post using a comprehensive single-call approach"""
     try:
         validate_text_input(cv_text, "CV text")
         validate_text_input(post, "Job post")
 
-        class CVMatch(BaseModel):
-            score: float
+        # Define a more structured response model that captures all three areas
+        class CVMatchDetailed(BaseModel):
+            experience_score: float
+            skills_score: float
+            soft_skills_score: float
+            final_score: float
 
         messages = [
             {
@@ -167,14 +171,65 @@ def match_cv_with_job(
             },
             {
                 "role": "user",
-                "content": f"CV:\n{cv_text}\n\nJob Post:\n{post}",
+                "content": f"""Analyze this CV and job post for compatibility.
+
+                First, evaluate these three key areas separately:
+                1. Experience Match (years of experience, domain knowledge, project scale)
+                2. Skills Match (technical skills, education, tools, certifications)
+                3. Soft Skills Match (communication, teamwork, problem-solving, cultural fit)
+
+                Then calculate the final weighted score using:
+                - Skills Match (45%)
+                - Experience Match (40%)
+                - Soft Skills Match (15%)
+
+                CV:
+                {cv_text}
+
+                Job Post:
+                {post}
+
+                Provide your response in this exact JSON format:
+                {{
+                    "experience_score": 85,
+                    "skills_score": 90,
+                    "soft_skills_score": 88,
+                    "final_score": 87
+                }}""",
             },
         ]
 
-        result = _make_llm_call(messages, CVMatch, max_retries, sleep_time)
-        return result.score if result else None
-    except LLMInputError as e:
-        logging.error(f"Input validation failed: {str(e)}")
+        result = _make_llm_call(messages, CVMatchDetailed, max_retries, sleep_time)
+        if result:
+            # Verify the final score calculation is correct
+            calculated_score = int(
+                (result.skills_score * 0.45)
+                + (result.experience_score * 0.40)
+                + (result.soft_skills_score * 0.15)
+            )
+
+            # If there's a significant discrepancy, use our calculation
+            if abs(calculated_score - result.final_score) > 2:
+                logging.warning(
+                    f"Correcting LLM score calculation: {result.final_score} -> {calculated_score}"
+                )
+                return calculated_score
+
+            return result.final_score
+        return None
+    except LLMInputError as error:
+        logging.error(f"Input validation failed: {str(error)}")
+        return None
+    except (LLMError, LLMResponseError, LLMRateLimitError) as error:
+        logging.error(f"LLM service error during CV matching: {str(error)}")
+        return None
+    except (ValueError, TypeError, KeyError) as error:
+        logging.error(f"Data processing error during CV matching: {str(error)}")
+        return None
+    except Exception as error:
+        logging.error(
+            f"Unexpected error during CV matching: {str(error)}", exc_info=True
+        )
         return None
 
 
