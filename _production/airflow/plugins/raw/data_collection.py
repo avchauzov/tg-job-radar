@@ -91,12 +91,12 @@ def scrape_channel(tg_client, channel, last_date):
 
         # Check for duplicates
         is_duplicate, existing_post, similarity_score = is_duplicate_post(
-            job_description, recent_posts
+            job_description_cleaned, recent_posts
         )
         if is_duplicate:
             logging.info(
                 f"Skipping duplicate message in channel: {channel}. "
-                f"Similarity score: {similarity_score}.\nCurrent post: {job_description}.\nExisting post: {existing_post}"
+                f"Similarity score: {similarity_score}.\nCurrent post: {job_description_cleaned}.\nExisting post: {existing_post}"
             )
             continue
 
@@ -104,7 +104,7 @@ def scrape_channel(tg_client, channel, last_date):
         result = {
             "id": generate_hash(message_link),
             "username": entity_title,
-            "post": message.text,
+            "post": job_description_cleaned,
             "date": process_date(message.date),
             "created_at": datetime.datetime.now(datetime.UTC),
             "post_link": message_link,
