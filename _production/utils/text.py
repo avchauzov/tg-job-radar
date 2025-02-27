@@ -1,12 +1,11 @@
 import logging
 import re
 from difflib import SequenceMatcher
-from typing import List
 
 from _production import PROBLEM_CHARS, TEXT_SIMILARITY_THRESHOLD
 
 
-def contains_keywords(text: str, keywords: List[str] = []) -> bool:
+def contains_keywords(text: str, keywords: list[str] = []) -> bool:
     """Check if any keywords appear in the given text.
 
     Args:
