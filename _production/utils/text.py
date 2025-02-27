@@ -3,7 +3,7 @@ import re
 from difflib import SequenceMatcher
 from typing import List
 
-from _production import TEXT_SIMILARITY_THRESHOLD
+from _production import PROBLEM_CHARS, TEXT_SIMILARITY_THRESHOLD
 
 
 def contains_keywords(text: str, keywords: List[str] = []) -> bool:
@@ -41,10 +41,12 @@ def clean_job_description(text):
             )
             return str(text)
 
-        text_cleaned = text.replace("\n", " ")
-        text_cleaned = re.sub(r"\s+", " ", text_cleaned).strip()
+        for char in PROBLEM_CHARS:
+            text = text.replace(char, " ")
 
-        return text_cleaned
+        text = re.sub(r"\s+", " ", text).strip()
+
+        return text
 
     except Exception as error:
         logging.warning(f"Error cleaning job description: {error}\n{text}")
