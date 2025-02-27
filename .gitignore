@@ -46,3 +46,7 @@ TODO.md
 
 # Logs
 *.log
+
+# Tool Configuration
+.cursorrules
+.pre-commit-config.yaml
