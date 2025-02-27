@@ -39,6 +39,40 @@ ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
 URL_EXTRACT_PATTERN: str = r"https?://[^\s()]+(?:\([\w\d]+\)|[^\s,()])*(?<![.,?!])"
 URL_REMOVAL_PATTERN: Pattern = re.compile(r"(https?://\S+|www\.\S+)")
 
+PROBLEM_CHARS = {
+    "\n",
+    "\r",
+    "\t",
+    '"',
+    "'",
+    "«",
+    "»",
+    "„",
+    "‟",
+    "—",
+    "–",
+    "‐",
+    "‑",
+    "‒",
+    "―",
+    "•",
+    "…",
+    "\u200b",
+    "\u200e",
+    "\u200f",
+    "\ufeff",
+    "′",
+    "″",
+    "‴",
+    "⁗",
+    "≪",
+    "≫",
+    "❛",
+    "❜",
+    "❝",
+    "❞",
+}
+
 # Constants with type hints
 DATE_FORMAT: str = "%Y-%m-%d %H:%M:%S"
 TEXT_SIMILARITY_THRESHOLD: float = 0.90
