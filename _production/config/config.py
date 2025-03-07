@@ -1,3 +1,10 @@
+"""Configuration module for loading and managing application settings.
+
+Handles configuration from environment variables, JSON files, and database sources,
+providing centralized access to application settings including API credentials,
+channel sources, and operational parameters.
+"""
+
 import json
 import logging
 import sys
@@ -35,8 +42,8 @@ except Exception:
 
 @lru_cache(maxsize=1)
 def load_config():
-    """
-    Load configuration from both environment variables and config file.
+    """Load configuration from both environment variables and config file.
+
     Uses caching to prevent repeated file reads.
     """
     config_path = get_correct_path("config/config.json")
@@ -45,7 +52,7 @@ def load_config():
         with open(config_path) as file:
             file_config = json.load(file)
     except json.JSONDecodeError as error:
-        raise ValueError(f"Invalid JSON in config file: {error}")
+        raise ValueError(f"Invalid JSON in config file: {error}") from error
     except FileNotFoundError:
         logging.warning(f"Config file not found at {config_path}, using defaults")
         file_config = {}
@@ -61,13 +68,13 @@ def load_config():
         # Convert tuple results to list of channel names
         db_channel_list = [channel[0] for channel in db_channels]
 
-        # Combine channels from config file with channels from database
-        file_config["source_channels"] = list(
-            set(file_config.get("source_channels", []) + db_channel_list)
-        )
+        # Set source_channels directly from database
+        file_config["source_channels"] = db_channel_list
         logging.info(f"Added {len(db_channel_list)} channels from database")
     except Exception as error:
         logging.error(f"Failed to fetch channels from database: {error}")
+        # Initialize with empty list if database fetch fails
+        file_config["source_channels"] = []
 
     return file_config, config_path
 
