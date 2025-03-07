@@ -1,6 +1,7 @@
 import os
 import re
-from typing import Any, Dict, Pattern
+from re import Pattern
+from typing import Any
 
 from dotenv import load_dotenv
 
@@ -9,7 +10,7 @@ load_dotenv()
 
 
 # Group related environment variables using dictionaries for better organization
-DATABASE: Dict[str, str] = {
+DATABASE: dict[str, str] = {
     "HOST": os.getenv("DB_HOST", ""),
     "NAME": os.getenv("DB_NAME", ""),
     "DB_TELEFLOW_NAME": os.getenv("DB_TELEFLOW_NAME", ""),
@@ -17,13 +18,13 @@ DATABASE: Dict[str, str] = {
     "PASSWORD": os.getenv("DB_PASSWORD", ""),
 }
 
-EMAIL: Dict[str, Any] = {
+EMAIL: dict[str, Any] = {
     "SENDER": os.getenv("SENDER_EMAIL", ""),
     "RECIPIENT": os.getenv("RECIPIENT_EMAIL", ""),
     "GMAIL_APP_PASSWORD": os.getenv("GMAIL_APP_PASSWORD", ""),
 }
 
-TELEGRAM: Dict[str, str] = {
+TELEGRAM: dict[str, str] = {
     "API_ID": os.getenv("TG_API_ID", "0"),
     "API_HASH": os.getenv("TG_API_HASH", ""),
 }
@@ -50,10 +51,7 @@ PROBLEM_CHARS = {
     "„",
     "‟",
     "—",
-    "–",
-    "‐",
-    "‑",
-    "‒",
+    "-",
     "―",
     "•",
     "…",
@@ -61,7 +59,6 @@ PROBLEM_CHARS = {
     "\u200e",
     "\u200f",
     "\ufeff",
-    "′",
     "″",
     "‴",
     "⁗",
@@ -121,5 +118,5 @@ if not ANTHROPIC_API_KEY:
 # Validate Telegram API_ID is numeric
 try:
     int(TELEGRAM["API_ID"])
-except ValueError:
-    raise ValueError("TG_API_ID must be a numeric value")
+except Exception as error:
+    raise Exception(f"TG_API_ID must be a numeric value: {error}") from error
