@@ -1,7 +1,17 @@
+"""
+LLM integration utilities for structured data extraction and analysis.
+
+This module provides functions for interacting with Anthropic's Claude API:
+- Job post detection and validation
+- CV-to-job matching with detailed scoring
+- Structured information extraction with retry logic
+- Error handling and input validation
+"""
+
 import json
 import logging
 import time
-from typing import Any, Dict, List, Optional, Type, TypeVar
+from typing import Any, TypeVar
 
 import instructor
 from pydantic import BaseModel
@@ -31,21 +41,28 @@ ANTHROPIC_CLIENT_STRUCTURED = instructor.from_anthropic(ANTHROPIC_CLIENT)
 
 
 class CleanJobPost(BaseModel):
-    job_title: Optional[str]
-    seniority_level: Optional[str]
-    location: Optional[str]
-    remote_status: Optional[str]
-    relocation_support: Optional[bool]
-    visa_sponsorship: Optional[bool]
-    salary_range: Optional[str]
-    company_name: Optional[str]
-    description: Optional[str]
+    """
+    Structured representation of a cleaned job post with standardized fields.
+
+    Contains normalized values for job details including title, seniority, location,
+    and other key attributes needed for matching and analysis.
+    """
+
+    job_title: str | None
+    seniority_level: str | None
+    location: str | None
+    remote_status: str | None
+    relocation_support: bool | None
+    visa_sponsorship: bool | None
+    salary_range: str | None
+    company_name: str | None
+    description: str | None
 
 
 def validate_text_input(
     text: str, field_name: str, max_length: int = MAX_TEXT_LENGTH
 ) -> None:
-    """Validate text input
+    """Validate text input.
 
     Args:
         text: Input text to validate
@@ -64,12 +81,12 @@ def validate_text_input(
 
 
 def _make_llm_call(
-    messages: List[Dict[str, str]],
-    response_format: Type[T],
+    messages: list[dict[str, str]],
+    response_format: type[T],
     max_retries: int = 3,
     sleep_time: int = 10,
-) -> Optional[T]:
-    """Make Anthropic API calls with retry logic"""
+) -> T | None:
+    """Make Anthropic API calls with retry logic."""
     system_message = next(
         (msg["content"] for msg in messages if msg["role"] == "system"), ""
     )
@@ -99,16 +116,18 @@ def _make_llm_call(
                 )
                 time.sleep(sleep_time)
                 if attempt == max_retries - 1:
-                    raise LLMRateLimitError("Rate limit exceeded after max retries")
+                    raise LLMRateLimitError(
+                        "Rate limit exceeded after max retries"
+                    ) from error
             else:
-                logging.error(f"LLM call failed: {str(error)}")
-                raise LLMError(f"LLM call failed: {str(error)}")
+                logging.error(f"LLM call failed: {error!s}")
+                raise LLMError(f"LLM call failed: {error!s}") from error
 
     return None
 
 
 def job_post_detection(post, max_retries=3, sleep_time=10):
-    """Determines if the text contains any job postings"""
+    """Determines if the text contains any job postings."""
 
     class JobPost(BaseModel):
         is_job_description: bool
@@ -129,7 +148,7 @@ def job_post_detection(post, max_retries=3, sleep_time=10):
 
 
 def single_job_post_detection(post, max_retries=3, sleep_time=10):
-    """Determines if the text contains exactly one job posting"""
+    """Determines if the text contains exactly one job posting."""
 
     class SingleJobPost(BaseModel):
         is_single_post: bool
@@ -151,8 +170,8 @@ def single_job_post_detection(post, max_retries=3, sleep_time=10):
 
 def match_cv_with_job(
     cv_text: str, post: str, max_retries: int = 3, sleep_time: int = 10
-) -> Optional[float]:
-    """Evaluates match between CV and job post using a comprehensive single-call approach"""
+) -> float | None:
+    """Evaluates match between CV and job post using a comprehensive single-call approach."""
     try:
         validate_text_input(cv_text, "CV text")
         validate_text_input(post, "Job post")
@@ -218,25 +237,23 @@ def match_cv_with_job(
             return result.final_score
         return None
     except LLMInputError as error:
-        logging.error(f"Input validation failed: {str(error)}")
+        logging.error(f"Input validation failed: {error!s}")
         return None
     except (LLMError, LLMResponseError, LLMRateLimitError) as error:
-        logging.error(f"LLM service error during CV matching: {str(error)}")
+        logging.error(f"LLM service error during CV matching: {error!s}")
         return None
     except (ValueError, TypeError, KeyError) as error:
-        logging.error(f"Data processing error during CV matching: {str(error)}")
+        logging.error(f"Data processing error during CV matching: {error!s}")
         return None
     except Exception as error:
-        logging.error(
-            f"Unexpected error during CV matching: {str(error)}", exc_info=True
-        )
+        logging.error(f"Unexpected error during CV matching: {error!s}", exc_info=True)
         return None
 
 
 def job_post_parsing(
     post: str, max_retries: int = 3, sleep_time: int = 10
-) -> Optional[Dict[str, Any]]:
-    """Parse job posting into structured format"""
+) -> dict[str, Any] | None:
+    """Parse job posting into structured format."""
     try:
         validate_text_input(post, "Job post")
 
@@ -245,9 +262,9 @@ def job_post_parsing(
             seniority_level: str
             location: str
             remote_status: str
-            relocation_support: Optional[bool]
-            visa_sponsorship: Optional[bool]
-            salary_range: Optional[str]
+            relocation_support: bool | None
+            visa_sponsorship: bool | None
+            salary_range: str | None
             company_name: str
             description: str
 
@@ -286,12 +303,12 @@ def job_post_parsing(
         # Single strip operation only on string values
         return cleaned_response_filtered
     except LLMInputError as error:
-        logging.error(f"Input validation failed: {str(error)}")
+        logging.error(f"Input validation failed: {error!s}")
         return None
 
 
-def clean_job_post_values(response: Dict[str, Any]) -> Dict[str, Any]:
-    """Clean and standardize job post values
+def clean_job_post_values(response: dict[str, Any]) -> dict[str, Any]:
+    """Clean and standardize job post values.
 
     Args:
         response: Raw job post data dictionary
@@ -320,8 +337,8 @@ def clean_job_post_values(response: Dict[str, Any]) -> Dict[str, Any]:
         if not result:
             raise LLMResponseError("Failed to get valid response from LLM")
         return result.model_dump()
-    except Exception as e:
-        logging.error(f"Failed to clean job post values: {str(e)}")
+    except Exception as error:
+        logging.error(f"Failed to clean job post values: {error!s}")
         return CleanJobPost(
             job_title=None,
             seniority_level=None,
