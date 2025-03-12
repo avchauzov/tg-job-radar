@@ -12,7 +12,7 @@ from _production.utils.agents import (
     enhanced_cv_matching,
     parse_llm_response,
 )
-from _production.utils.exceptions import LLMError
+from _production.utils.exceptions import LLMError, LLMParsingError
 
 
 class TestParseLLMResponse(unittest.TestCase):
@@ -60,27 +60,16 @@ class TestParseLLMResponse(unittest.TestCase):
     def test_parse_invalid_json(self):
         """Test parsing an invalid JSON response."""
         response = "This is not a valid JSON response"
-        result = parse_llm_response(response)
-        self.assertEqual(result["score"], 0)
-        self.assertTrue("No valid JSON found" in result["reasoning"])
-        # Verify log was captured but don't print it
-        self.assertTrue(
-            any("No JSON object found" in log.getMessage() for log in self.log_capture)
-        )
+        with self.assertRaises(LLMParsingError) as context:
+            parse_llm_response(response)
+        self.assertIn("No JSON object found in response", str(context.exception))
 
     def test_parse_malformed_json(self):
         """Test parsing a malformed JSON response."""
         response = '{"score": 85, "reasoning": "Missing closing bracket'
-        result = parse_llm_response(response)
-        self.assertEqual(result["score"], 0)
-        self.assertTrue("Error parsing response" in result["reasoning"])
-        # Verify log was captured but don't print it
-        self.assertTrue(
-            any(
-                "Failed to parse LLM response" in log.getMessage()
-                for log in self.log_capture
-            )
-        )
+        with self.assertRaises(LLMParsingError) as context:
+            parse_llm_response(response)
+        self.assertIn("No JSON object found in response", str(context.exception))
 
 
 class LogCaptureHandler(logging.Handler):
