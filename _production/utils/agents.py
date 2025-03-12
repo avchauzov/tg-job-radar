@@ -19,6 +19,33 @@ from _production import LLM_BASE_MODEL
 from _production.utils.exceptions import LLMError, LLMParsingError
 
 
+def validate_input_text(text: str, input_name: str, min_length: int = 50) -> str:
+    """
+    Validate input text for LLM processing.
+
+    Args:
+        text: The text to validate
+        input_name: Name of the input for error messages
+        min_length: Minimum acceptable length for the text
+
+    Returns:
+        str: The validated text
+
+    Raises:
+        ValueError: If the text is invalid or too short
+    """
+    if not text:
+        raise ValueError(f"{input_name} cannot be empty")
+
+    text_str = str(text).strip()
+    if len(text_str) < min_length:
+        raise ValueError(
+            f"{input_name} is too short (minimum {min_length} characters required)"
+        )
+
+    return text_str
+
+
 def parse_llm_response(response: str | list) -> dict:
     """
     Safely parse LLM response into a dictionary with structured error handling.
@@ -167,6 +194,99 @@ def create_cv_matching_agent(cv_content: str):
             ..., description="The job posting to match against the CV"
         )
 
+    def validate_input_text(text: str, input_name: str, min_length: int = 50) -> str:
+        """
+        Validate input text for LLM processing.
+
+        Args:
+            text: The text to validate
+            input_name: Name of the input for error messages
+            min_length: Minimum acceptable length for the text
+
+        Returns:
+            str: The validated text
+
+        Raises:
+            ValueError: If the text is invalid or too short
+        """
+        if not text:
+            raise ValueError(f"{input_name} cannot be empty")
+
+        text_str = str(text).strip()
+        if len(text_str) < min_length:
+            raise ValueError(
+                f"{input_name} is too short (minimum {min_length} characters required)"
+            )
+
+        return text_str
+
+    def process_job_post_input(job_post: Any) -> str:
+        """
+        Process and normalize job post input from various formats.
+
+        Args:
+            job_post: The job posting in various possible formats
+
+        Returns:
+            str: Normalized job post text
+        """
+        # Handle different input formats
+        if isinstance(job_post, dict) and "job_post" in job_post:
+            # Extract from structured input
+            job_post_str = str(job_post["job_post"])
+        elif isinstance(job_post, dict | list):
+            # If it's a structured input, convert to string representation
+            import json
+
+            try:
+                job_post_str = json.dumps(job_post)
+            except (TypeError, ValueError):
+                job_post_str = str(job_post)
+        elif isinstance(job_post, list | tuple):
+            # If it's a list of arguments, use only the first one as job post
+            logging.warning(
+                f"Received multiple arguments to comprehensive_cv_analysis: {job_post}"
+            )
+            job_post_str = str(job_post[0]) if job_post else ""
+        else:
+            # Regular string input
+            job_post_str = str(job_post)
+
+        return job_post_str
+
+    def validate_cv_analysis_response(parsed_response: dict) -> None:
+        """
+        Validate the structure of a CV analysis response.
+
+        Args:
+            parsed_response: The parsed response to validate
+
+        Raises:
+            LLMParsingError: If the response structure is invalid
+        """
+        # Validate the expected structure exists
+        required_fields = ["experience_match", "skills_match", "soft_skills_match"]
+        missing_fields = [
+            field for field in required_fields if field not in parsed_response
+        ]
+
+        if missing_fields:
+            raise LLMParsingError(
+                "Missing required fields in LLM response",
+                field=", ".join(missing_fields),
+            )
+
+        # Validate each field has the expected structure
+        for field in required_fields:
+            if (
+                not isinstance(parsed_response[field], dict)
+                or "score" not in parsed_response[field]
+            ):
+                raise LLMParsingError(
+                    "Invalid structure for field",
+                    field=field,
+                )
+
     def comprehensive_cv_analysis(job_post: Any) -> dict[str, dict[str, float]]:
         """
         Analyze all aspects of CV match in a single request with improved response formatting.
@@ -180,56 +300,39 @@ def create_cv_matching_agent(cv_content: str):
         Raises:
             LLMParsingError: If the response cannot be parsed into the expected format
             LLMError: If other LLM-related errors occur
+            ValueError: If input validation fails
         """
         try:
-            # Handle different input formats
-            if isinstance(job_post, dict) and "job_post" in job_post:
-                # Extract from structured input
-                job_post_str = str(job_post["job_post"])
-            elif isinstance(job_post, dict | list):
-                # If it's a structured input, convert to string representation
-                import json
+            # Process and normalize job post input
+            job_post_str = process_job_post_input(job_post)
 
-                try:
-                    job_post_str = json.dumps(job_post)
-                except (TypeError, ValueError):
-                    job_post_str = str(job_post)
-            elif isinstance(job_post, list | tuple):
-                # If it's a list of arguments, use only the first one as job post
-                logging.warning(
-                    f"Received multiple arguments to comprehensive_cv_analysis: {job_post}"
-                )
-                job_post_str = str(job_post[0]) if job_post else ""
-            else:
-                # Regular string input
-                job_post_str = str(job_post)
+            # Validate the job post
+            job_post_str = validate_input_text(job_post_str, "Job post")
 
             # Log the processed job post
             logging.debug(f"Processing job post: {job_post_str[:200]}...")
 
             response = llm.invoke(
-                f"""You are a technical recruiter evaluating candidate CVs against job requirements.
+                f"""Evaluate CV against job requirements. Provide scores (0-100) for:
 
-                Analyze the match between the CV and job post comprehensively, considering all of these aspects:
+                1. EXPERIENCE MATCH (40% weight):
+                   - Years of Experience (50%)
+                   - Domain Knowledge (30%)
+                   - Project Scale (20%)
 
-                1. EXPERIENCE MATCH (weighted at 40% of final score):
-                   - Years of Experience Match (50%): Compare required vs actual years
-                   - Domain Knowledge Match (30%): Evaluate industry and domain expertise
-                   - Project Scale Experience (20%): Assess complexity and scale of projects
+                2. SKILLS MATCH (45% weight):
+                   - Technical Skills (40%)
+                   - Education (25%)
+                   - Tools/Technologies (20%)
+                   - Certifications (15%)
 
-                2. SKILLS MATCH (weighted at 45% of final score):
-                   - Technical Skills Match (40%): Must-have technical requirements
-                   - Education Requirements Match (25%): Required education level
-                   - Tools and Technologies (20%): Required tools and frameworks
-                   - Professional Certifications (15%): Relevant certifications
+                3. SOFT SKILLS MATCH (15% weight):
+                   - Communication (30%)
+                   - Team Collaboration (30%)
+                   - Problem-Solving (20%)
+                   - Cultural Fit (20%)
 
-                3. SOFT SKILLS MATCH (weighted at 15% of final score):
-                   - Communication Skills (30%): Written and verbal communication abilities
-                   - Team Collaboration (30%): Experience in team environments
-                   - Problem-Solving Approach (20%): Analytical and solution-oriented mindset
-                   - Cultural Values Alignment (20%): Work style and company culture fit
-
-                Score Guidelines for each category:
+                Score Guidelines:
                 95-100: Exceeds all requirements
                 85-94: Meets all requirements
                 75-84: Meets most requirements
@@ -237,24 +340,19 @@ def create_cv_matching_agent(cv_content: str):
                 50-64: Meets some requirements
                 0-49: Missing critical requirements
 
-                IMPORTANT: For each of the three main categories, provide detailed reasoning about why you assigned the score.
-                Calculate all numeric scores yourself. Do not include any mathematical expressions.
-
-                CRITICAL: Your response MUST be ONLY valid JSON with no additional text before or after. Do not include any explanations outside the JSON structure.
-
-                Provide your response in this exact JSON format, with only numbers for scores:
+                RESPONSE FORMAT: JSON only with this structure:
                 {{
                     "experience_match": {{
                         "score": 85,
-                        "reasoning": "Detailed reasoning for experience score..."
+                        "reasoning": "Detailed reasoning..."
                     }},
                     "skills_match": {{
                         "score": 90,
-                        "reasoning": "Detailed reasoning for skills score..."
+                        "reasoning": "Detailed reasoning..."
                     }},
                     "soft_skills_match": {{
                         "score": 88,
-                        "reasoning": "Detailed reasoning for soft skills score..."
+                        "reasoning": "Detailed reasoning..."
                     }}
                 }}
 
@@ -276,37 +374,17 @@ def create_cv_matching_agent(cv_content: str):
                     response=str(error.response) if error.response else None,
                 ) from error
 
-            # Validate the expected structure exists
-            required_fields = ["experience_match", "skills_match", "soft_skills_match"]
-            missing_fields = [
-                field for field in required_fields if field not in parsed_response
-            ]
-
-            if missing_fields:
-                raise LLMParsingError(
-                    "Missing required fields in LLM response",
-                    response=str(response.content)[:1000] if response.content else None,
-                    field=", ".join(missing_fields),
-                )
-
-            # Validate each field has the expected structure
-            for field in required_fields:
-                if (
-                    not isinstance(parsed_response[field], dict)
-                    or "score" not in parsed_response[field]
-                ):
-                    raise LLMParsingError(
-                        "Invalid structure for field",
-                        response=(
-                            str(response.content)[:1000] if response.content else None
-                        ),
-                        field=field,
-                    )
+            # Validate the response structure
+            validate_cv_analysis_response(parsed_response)
 
             return parsed_response
 
         except LLMParsingError:
             # Re-raise parsing errors without wrapping
+            raise
+        except ValueError as error:
+            # Re-raise validation errors
+            logging.error(f"Input validation error: {error}")
             raise
         except Exception as error:
             error_msg = f"Comprehensive CV analysis failed: {error!s}"
@@ -331,6 +409,40 @@ def create_cv_matching_agent(cv_content: str):
     )
 
 
+def validate_cv_analysis_response(parsed_response: dict) -> None:
+    """
+    Validate the structure of a CV analysis response.
+
+    Args:
+        parsed_response: The parsed response to validate
+
+    Raises:
+        LLMParsingError: If the response structure is invalid
+    """
+    # Validate the expected structure exists
+    required_fields = ["experience_match", "skills_match", "soft_skills_match"]
+    missing_fields = [
+        field for field in required_fields if field not in parsed_response
+    ]
+
+    if missing_fields:
+        raise LLMParsingError(
+            "Missing required fields in LLM response",
+            field=", ".join(missing_fields),
+        )
+
+    # Validate each field has the expected structure
+    for field in required_fields:
+        if (
+            not isinstance(parsed_response[field], dict)
+            or "score" not in parsed_response[field]
+        ):
+            raise LLMParsingError(
+                "Invalid structure for field",
+                field=field,
+            )
+
+
 def enhanced_cv_matching(cv_content: str, job_post: str) -> float | None:
     """
     Enhanced CV matching using LangChain agent with improved error handling.
@@ -343,52 +455,31 @@ def enhanced_cv_matching(cv_content: str, job_post: str) -> float | None:
         float: The calculated match score (0-100) or None if processing failed
     """
     try:
+        # Validate inputs
+        cv_content = validate_input_text(cv_content, "CV content", min_length=100)
+        job_post = validate_input_text(job_post, "Job post", min_length=50)
+
         agent = create_cv_matching_agent(cv_content)
 
         result = agent.invoke(
             {
-                "input": f"""Analyze this job post for compatibility with the CV.
+                "input": f"""Analyze job post compatibility with CV.
 
-                IMPORTANT: Use the comprehensive_cv_analysis tool with ONLY the job post as input.
-                DO NOT pass any additional parameters to the tool.
+                Use comprehensive_cv_analysis tool with ONLY the job post as input.
 
-                Example of correct tool usage:
-                ```json
-                {{
-                    "action": "comprehensive_cv_analysis",
-                    "action_input": "Job description text"
-                }}
-                ```
-
-                The tool will return scores for:
-                - Experience Match (40% weight in final score)
-                - Skills Match (45% weight in final score)
-                - Soft Skills Match (15% weight in final score)
-
-                After getting the scores, calculate the final weighted score as:
+                After getting scores, calculate:
                 final_score = (experience_score * 0.40) + (skills_score * 0.45) + (soft_skills_score * 0.15)
 
-                CRITICAL: Your final response MUST be in valid JSON format with the following structure:
+                Return JSON with:
                 {{
-                    "experience_match": {{
-                        "score": 85,
-                        "reasoning": "Detailed reasoning..."
-                    }},
-                    "skills_match": {{
-                        "score": 90,
-                        "reasoning": "Detailed reasoning..."
-                    }},
-                    "soft_skills_match": {{
-                        "score": 88,
-                        "reasoning": "Detailed reasoning..."
-                    }},
+                    "experience_match": {{ "score": 85, "reasoning": "..." }},
+                    "skills_match": {{ "score": 90, "reasoning": "..." }},
+                    "soft_skills_match": {{ "score": 88, "reasoning": "..." }},
                     "final_score": 87,
                     "final_reasoning": "Overall assessment..."
                 }}
 
-                Do not include any text outside the JSON structure. The response must be valid JSON.
-
-                Job Post to analyze: {job_post}
+                Job Post: {job_post}
                 """,
                 "chat_history": [],
             }
@@ -425,34 +516,8 @@ def enhanced_cv_matching(cv_content: str, job_post: str) -> float | None:
                 logging.info(f"Using pre-calculated final score: {final_score}")
                 return final_score
 
-            # Validate the expected structure exists
-            required_fields = ["experience_match", "skills_match", "soft_skills_match"]
-            missing_fields = [
-                field for field in required_fields if field not in parsed_output
-            ]
-
-            if missing_fields:
-                error_msg = "Missing required fields in output"
-                logging.error(f"{error_msg}: {missing_fields}")
-                raise LLMParsingError(
-                    error_msg,
-                    response=str(output_data)[:1000] if output_data else None,
-                    field=", ".join(missing_fields),
-                )
-
-            # Validate each field has the expected structure
-            for field in required_fields:
-                if (
-                    not isinstance(parsed_output[field], dict)
-                    or "score" not in parsed_output[field]
-                ):
-                    error_msg = "Invalid structure for field"
-                    logging.error(f"{error_msg} {field}: {parsed_output[field]}")
-                    raise LLMParsingError(
-                        error_msg,
-                        response=str(output_data)[:1000] if output_data else None,
-                        field=field,
-                    )
+            # Validate the response structure
+            validate_cv_analysis_response(parsed_output)
 
             # Extract and convert scores to float
             try:
@@ -487,6 +552,10 @@ def enhanced_cv_matching(cv_content: str, job_post: str) -> float | None:
                 response=str(result["output"])[:1000] if "output" in result else None,
             ) from error
 
+    except ValueError as error:
+        # Handle input validation errors
+        logging.error(f"Input validation error in CV matching: {error}")
+        return None
     except (LLMParsingError, LLMError) as error:
         logging.error(f"CV matching error: {error!s}")
         return None
