@@ -1,3 +1,13 @@
+"""
+Prompt templates for AI-powered job matching and analysis.
+
+This module contains standardized prompts used by various LLM agents in the system:
+- Job post detection and classification
+- CV-to-job matching with detailed scoring
+- Job post cleaning and standardization
+- Structured information extraction
+"""
+
 JOB_POST_DETECTION_PROMPT = """You are an expert at analyzing job-related content.
 Determine if a text contains ANY job postings.
 
@@ -65,9 +75,33 @@ Scoring Guidelines:
 50-64: Meets some requirements
 0-49: Missing critical requirements
 
-Calculate a single final score (0-100) by:
-1. First determining a score for each of the three key areas
-2. Then applying the weights: Skills (45%), Experience (40%), Soft Skills (15%)
+Step-by-step evaluation process:
+1. First, analyze each component within the three key areas:
+   - For Experience Match:
+     * Assess years of experience: [Your reasoning here]
+     * Evaluate domain knowledge: [Your reasoning here]
+     * Analyze project scale experience: [Your reasoning here]
+     * Calculate Experience Match score: [Your calculation]
+
+   - For Skills Match:
+     * Evaluate technical skills: [Your reasoning here]
+     * Assess education requirements: [Your reasoning here]
+     * Review tools and technologies knowledge: [Your reasoning here]
+     * Check professional certifications: [Your reasoning here]
+     * Calculate Skills Match score: [Your calculation]
+
+   - For Soft Skills Match:
+     * Evaluate communication skills: [Your reasoning here]
+     * Assess team collaboration: [Your reasoning here]
+     * Review problem-solving approach: [Your reasoning here]
+     * Analyze cultural values alignment: [Your reasoning here]
+     * Calculate Soft Skills Match score: [Your calculation]
+
+2. Then calculate the final weighted score:
+   - Experience Match (40%): [Score] x 0.4 = [Weighted score]
+   - Skills Match (45%): [Score] x 0.45 = [Weighted score]
+   - Soft Skills Match (15%): [Score] x 0.15 = [Weighted score]
+   - Final Score: [Sum of weighted scores]
 
 IMPORTANT: Calculate all numeric values yourself. Do not include any mathematical expressions.
 Return only the final calculated score as a single number."""
