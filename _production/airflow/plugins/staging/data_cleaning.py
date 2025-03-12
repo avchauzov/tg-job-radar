@@ -1,7 +1,16 @@
+"""
+Data cleaning module for processing job posts and matching them against CV content.
+
+This module handles the ETL process from raw data to staging, including:
+- CV content validation and retrieval
+- Job post detection and classification
+- CV-to-job matching with scoring
+- Structured data parsing and storage
+"""
+
 import datetime
 import json
 import logging
-from typing import Optional
 
 import pandas as pd
 import requests
@@ -60,7 +69,7 @@ def validate_cv_content(cv_content: str) -> bool:
         f"All retry attempts failed for CV fetch after {retry_state.attempt_number} attempts"
     ),
 )
-def fetch_cv_content(doc_id: str) -> Optional[str]:
+def fetch_cv_content(doc_id: str) -> str | None:
     """
     Fetch CV content from Google Docs with retry logic and timeout.
 
@@ -82,11 +91,21 @@ def fetch_cv_content(doc_id: str) -> Optional[str]:
 
         return content
     except requests.RequestException as error:
-        logging.debug(f"CV fetch failed: {str(error)}", exc_info=True)
+        logging.debug(f"CV fetch failed: {error!s}", exc_info=True)
         raise
 
 
-def process_batch(batch_df: pd.DataFrame, cv_content: str) -> Optional[pd.DataFrame]:
+def process_batch(batch_df: pd.DataFrame, cv_content: str) -> pd.DataFrame | None:
+    """
+    Process a batch of posts against CV content for job matching.
+
+    Args:
+        batch_df: DataFrame containing posts to be processed
+        cv_content: String content of the CV to match against
+
+    Returns:
+        DataFrame with processed job posts or None if processing fails
+    """
     try:
         # Initialize columns with appropriate default values
         batch_df.loc[:, "is_job_post"] = False
@@ -137,7 +156,7 @@ def process_batch(batch_df: pd.DataFrame, cv_content: str) -> Optional[pd.DataFr
         return batch_df[batch_df["post_structured"] != "{}"]
 
     except Exception as error:
-        logging.error(f"Error processing batch: {str(error)}", exc_info=True)
+        logging.error(f"Error processing batch: {error!s}", exc_info=True)
         return None
 
 
@@ -147,7 +166,7 @@ def process_batch(batch_df: pd.DataFrame, cv_content: str) -> Optional[pd.DataFr
 )
 def process_batch_with_retry(
     batch_df: pd.DataFrame, cv_content: str
-) -> Optional[pd.DataFrame]:
+) -> pd.DataFrame | None:
     """
     Process batch with retry logic.
 
@@ -160,7 +179,7 @@ def process_batch_with_retry(
     try:
         return process_batch(batch_df, cv_content)
     except Exception as error:
-        logging.error(f"Batch processing failed: {str(error)}", exc_info=True)
+        logging.error(f"Batch processing failed: {error!s}", exc_info=True)
         raise
 
 
@@ -205,7 +224,7 @@ def clean_and_move_data():
 
             except Exception as batch_error:
                 logging.error(
-                    f"Batch {batch_num} processing failed: {str(batch_error)}",
+                    f"Batch {batch_num} processing failed: {batch_error!s}",
                     exc_info=True,
                 )
                 continue
@@ -214,7 +233,7 @@ def clean_and_move_data():
 
     except Exception as error:
         logging.error("Data pipeline failed", exc_info=True)
-        raise Exception(f"Data pipeline failed: {str(error)}")
+        raise Exception(f"Data pipeline failed: {error!s}") from error
 
 
 if __name__ == "__main__":
