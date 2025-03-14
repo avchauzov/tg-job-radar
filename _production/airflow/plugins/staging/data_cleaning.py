@@ -8,6 +8,7 @@ This module handles the ETL process from raw data to staging, including:
 - Structured data parsing and storage
 """
 
+import contextlib
 import datetime
 import json
 import logging
@@ -110,7 +111,7 @@ def process_batch(batch_df: pd.DataFrame, cv_content: str) -> pd.DataFrame | Non
         # Initialize columns with appropriate default values
         batch_df.loc[:, "is_job_post"] = False
         batch_df.loc[:, "is_single_job_post"] = False
-        batch_df.loc[:, "score"] = 0
+        batch_df.loc[:, "score"] = 0.0  # Changed from 0 to 0.0 to ensure float dtype
         batch_df.loc[:, "post_structured"] = "{}"
 
         # Job post detection
@@ -125,17 +126,37 @@ def process_batch(batch_df: pd.DataFrame, cv_content: str) -> pd.DataFrame | Non
 
         # First pass: Quick scoring with optimized function
         score_mask_simple = batch_df["is_single_job_post"] & batch_df["is_job_post"]
+
+        # Safely handle score assignment with proper error handling
+        def safe_match_score(post: str) -> float:
+            try:
+                score = match_cv_with_job(cv_content, post)
+                return float(score) if score is not None else 0.0
+            except Exception as error:
+                logging.warning(f"Error in match_cv_with_job: {error}")
+                return 0.0
+
         batch_df.loc[score_mask_simple, "score"] = batch_df.loc[
             score_mask_simple, "post"
-        ].apply(lambda post: match_cv_with_job(cv_content, post) or 0)
+        ].apply(safe_match_score)
 
         # Second pass: Detailed scoring for promising candidates
         score_mask_advanced = (
             batch_df["is_single_job_post"] & batch_df["is_job_post"]
         ) & (batch_df["score"] >= MATCH_SCORE_THRESHOLD)
+
+        # Safely handle enhanced CV matching with proper error handling
+        def safe_enhanced_matching(post: str) -> float:
+            try:
+                score = enhanced_cv_matching(cv_content, post)
+                return float(score) if score is not None else 0.0
+            except Exception as error:
+                logging.warning(f"Error in enhanced_cv_matching: {error}")
+                return 0.0
+
         batch_df.loc[score_mask_advanced, "score"] = batch_df.loc[
             score_mask_advanced, "post"
-        ].apply(lambda post: enhanced_cv_matching(cv_content, post) or 0)
+        ].apply(safe_enhanced_matching)
 
         # Post parsing - only for posts meeting all criteria
         parsing_mask = (
@@ -143,9 +164,21 @@ def process_batch(batch_df: pd.DataFrame, cv_content: str) -> pd.DataFrame | Non
             & batch_df["is_job_post"]
             & (batch_df["score"] >= MATCH_SCORE_THRESHOLD)
         )
+
+        # Safely handle job post parsing with proper error handling
+        def safe_job_parsing(post: str) -> str:
+            try:
+                parsed_data = job_post_parsing(post)
+                if parsed_data:
+                    return json.dumps(parsed_data)
+                return "{}"
+            except Exception as error:
+                logging.warning(f"Error in job_post_parsing: {error}")
+                return "{}"
+
         batch_df.loc[parsing_mask, "post_structured"] = batch_df.loc[
             parsing_mask, "post"
-        ].apply(lambda post: json.dumps(job_post_parsing(post)))
+        ].apply(safe_job_parsing)
 
         # Set timestamp
         batch_df.loc[:, "created_at"] = pd.Timestamp(
@@ -186,6 +219,13 @@ def process_batch_with_retry(
 def clean_and_move_data():
     """Main function to clean and move data from raw to staging."""
     try:
+        # Set multiprocessing start method to 'spawn' to avoid fork-related issues
+        import multiprocessing
+
+        if hasattr(multiprocessing, "set_start_method"):
+            with contextlib.suppress(RuntimeError):
+                multiprocessing.set_start_method("spawn", force=True)
+
         # Fetch and validate CV content
         cv_content = fetch_cv_content(CV_DOC_ID)
 
@@ -206,9 +246,18 @@ def clean_and_move_data():
         for batch_num, i in enumerate(range(0, len(df), DATA_BATCH_SIZE), 1):
             try:
                 batch_df = df[i : i + DATA_BATCH_SIZE].copy()
+
+                # Ensure proper column dtypes before processing
+                if "score" in batch_df.columns:
+                    batch_df["score"] = batch_df["score"].astype(float)
+
                 processed_df = process_batch_with_retry(batch_df, str(cv_content))
 
                 if processed_df is not None and not processed_df.empty:
+                    # Ensure all numeric columns are properly converted to the right type
+                    if "score" in processed_df.columns:
+                        processed_df["score"] = processed_df["score"].astype(float)
+
                     records = processed_df.to_dict(orient="records")
                     batch_insert_to_db(
                         STAGING_DATA__POSTS,
