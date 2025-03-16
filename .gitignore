@@ -50,3 +50,6 @@ TODO.md
 # Tool Configuration
 .cursorrules
 .pre-commit-config.yaml
+
+k8s/
+terraform/
