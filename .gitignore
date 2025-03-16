@@ -49,6 +49,8 @@ TODO.md
 
 # Tool Configuration
 .cursorrules
+.cursorignore
+.cursorindexingignore
 .pre-commit-config.yaml
 
 k8s/
