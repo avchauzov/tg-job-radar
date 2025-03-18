@@ -11,7 +11,6 @@ Handles the process of:
 import logging
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from typing import List, Optional
 
 import pandas as pd
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -30,7 +29,7 @@ from _production.utils.sql import (
 setup_logging(__file__[:-3])
 
 
-def fetch_new_posts() -> Optional[pd.DataFrame]:
+def fetch_new_posts() -> pd.DataFrame | None:
     """
     Fetch new unnotified posts from the production database.
 
@@ -56,7 +55,7 @@ def fetch_new_posts() -> Optional[pd.DataFrame]:
 
     except Exception as error:
         logging.error("Failed to fetch new posts from database", exc_info=True)
-        raise Exception(f"Database fetch failed: {str(error)}") from error
+        raise Exception(f"Database fetch failed: {error!s}") from error
 
 
 def create_email_message(
@@ -93,7 +92,7 @@ def handle_retry_failure(retry_state):
     wait=wait_exponential(multiplier=1, min=2, max=8),
     retry_error_callback=handle_retry_failure,
 )
-def process_chunk(chunk: pd.DataFrame, index: int, total_chunks: int) -> List[int]:
+def process_chunk(chunk: pd.DataFrame, index: int, total_chunks: int) -> list[int]:
     """
     Process a single chunk of posts with retry logic.
 
@@ -114,7 +113,7 @@ def process_chunk(chunk: pd.DataFrame, index: int, total_chunks: int) -> List[in
     raise Exception(f"Failed to send email chunk {index}/{total_chunks}")
 
 
-def send_notifications(df: pd.DataFrame) -> List[int]:
+def send_notifications(df: pd.DataFrame) -> list[int]:
     """
     Send email notifications in chunks.
 
@@ -129,7 +128,7 @@ def send_notifications(df: pd.DataFrame) -> List[int]:
             df.iloc[i : i + DATA_BATCH_SIZE] for i in range(0, len(df), DATA_BATCH_SIZE)
         ]
         total_chunks = len(chunks)
-        successful_ids: List[int] = []
+        successful_ids: list[int] = []
 
         for index, chunk in enumerate(chunks, start=1):
             try:
@@ -146,10 +145,10 @@ def send_notifications(df: pd.DataFrame) -> List[int]:
 
     except Exception as error:
         logging.error("Failed to process notification chunks", exc_info=True)
-        raise Exception(f"Notification processing failed: {str(error)}") from error
+        raise Exception(f"Notification processing failed: {error!s}") from error
 
 
-def update_notifications(successful_ids: List[int]) -> None:
+def update_notifications(successful_ids: list[int]) -> None:
     """
     Update notification status for successfully sent emails.
 
@@ -173,7 +172,7 @@ def update_notifications(successful_ids: List[int]) -> None:
 
     except Exception as error:
         logging.error("Failed to update notification status", exc_info=True)
-        raise Exception(f"Database update failed: {str(error)}") from error
+        raise Exception(f"Database update failed: {error!s}") from error
 
 
 def notify_me() -> None:
@@ -210,7 +209,7 @@ def notify_me() -> None:
 
     except Exception as error:
         logging.error("Notification process failed", exc_info=True)
-        raise Exception(f"Notification process failed: {str(error)}") from error
+        raise Exception(f"Notification process failed: {error!s}") from error
 
 
 if __name__ == "__main__":
