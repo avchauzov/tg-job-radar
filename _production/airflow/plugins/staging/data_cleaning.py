@@ -21,7 +21,6 @@ from _production import (
     CV_DOC_ID,
     DATA_BATCH_SIZE,
     MATCH_SCORE_THRESHOLD,
-    MAX_RETRY_ATTEMPTS,
     NUMBER_OF_BATCHES,
     RAW_DATA__TG_POSTS,
     STAGING_DATA__POSTS,
@@ -108,112 +107,208 @@ def process_batch(batch_df: pd.DataFrame, cv_content: str) -> pd.DataFrame | Non
         DataFrame with processed job posts or None if processing fails
     """
     try:
+        initial_count = len(batch_df)
+        logging.info("=" * 80)
+        logging.info(f"🔄 BATCH PROCESSING: Starting with {initial_count} posts")
+        logging.info("=" * 80)
+
         # Initialize columns with appropriate default values
         batch_df.loc[:, "is_job_post"] = False
         batch_df.loc[:, "is_single_job_post"] = False
-        batch_df.loc[:, "score"] = 0.0  # Changed from 0 to 0.0 to ensure float dtype
+        batch_df.loc[:, "score"] = 0.0
         batch_df.loc[:, "post_structured"] = "{}"
+        batch_df.loc[:, "parsing_error"] = False
+        logging.info("✓ Initialized default values for all columns")
 
         # Job post detection
+        logging.info("-" * 40)
+        logging.info("STEP 1: Job Post Detection")
+        logging.info("-" * 40)
         job_post_mask = batch_df["post"].apply(job_post_detection)
         batch_df.loc[job_post_mask, "is_job_post"] = True
+        job_posts_count = job_post_mask.sum()
+        logging.info(
+            f"📊 Results:\n"
+            f"  - Total posts: {initial_count}\n"
+            f"  - Job posts found: {job_posts_count}\n"
+            f"  - Success rate: {(job_posts_count/initial_count)*100:.1f}%"
+        )
 
-        # Single job post detection - only for confirmed job posts
+        # Single job post detection
+        logging.info("\n" + "-" * 40)
+        logging.info("STEP 2: Single Job Post Detection")
+        logging.info("-" * 40)
         single_post_mask = (batch_df["is_job_post"]) & (
             batch_df[batch_df["is_job_post"]]["post"].apply(single_job_post_detection)
         )
         batch_df.loc[single_post_mask, "is_single_job_post"] = True
+        single_posts_count = single_post_mask.sum()
+        logging.info(
+            f"📊 Results:\n"
+            f"  - Job posts analyzed: {job_posts_count}\n"
+            f"  - Single posts found: {single_posts_count}\n"
+            f"  - Success rate: {(single_posts_count/job_posts_count)*100:.1f}% of job posts"
+        )
 
-        # First pass: Quick scoring with optimized function
+        # First pass scoring
+        logging.info("\n" + "-" * 40)
+        logging.info("STEP 3: Initial CV Matching Score")
+        logging.info("-" * 40)
         score_mask_simple = batch_df["is_single_job_post"] & batch_df["is_job_post"]
+        posts_to_score = score_mask_simple.sum()
+        logging.info(f"⚡ Quick scoring {posts_to_score} eligible posts")
 
-        # Safely handle score assignment with proper error handling
         def safe_match_score(post: str) -> float:
             try:
                 score = match_cv_with_job(cv_content, post)
                 return float(score) if score is not None else 0.0
             except Exception as error:
-                logging.warning(f"Error in match_cv_with_job: {error}")
+                logging.warning(f"⚠️ Error in match_cv_with_job: {error}")
                 return 0.0
 
         batch_df.loc[score_mask_simple, "score"] = batch_df.loc[
             score_mask_simple, "post"
         ].apply(safe_match_score)
 
-        # Second pass: Detailed scoring for promising candidates
+        # Score threshold analysis
+        above_threshold = batch_df[batch_df["score"] >= MATCH_SCORE_THRESHOLD]
+        threshold_count = len(above_threshold)
+        logging.info(
+            f"📊 Results:\n"
+            f"  - Posts scored: {posts_to_score}\n"
+            f"  - Above threshold ({MATCH_SCORE_THRESHOLD}): {threshold_count}\n"
+            f"  - Success rate: {(threshold_count/posts_to_score)*100:.1f}% passed threshold"
+        )
+
+        # Enhanced scoring
+        logging.info("\n" + "-" * 40)
+        logging.info("STEP 4: Enhanced CV Matching")
+        logging.info("-" * 40)
         score_mask_advanced = (
             batch_df["is_single_job_post"] & batch_df["is_job_post"]
         ) & (batch_df["score"] >= MATCH_SCORE_THRESHOLD)
+        posts_for_enhanced = score_mask_advanced.sum()
+        logging.info(f"🔍 Performing enhanced matching on {posts_for_enhanced} posts")
 
-        # Safely handle enhanced CV matching with proper error handling
-        def safe_enhanced_matching(post: str) -> float:
+        def safe_enhanced_matching(post: str) -> tuple[float | None, bool]:
             try:
                 score = enhanced_cv_matching(cv_content, post)
-                return float(score) if score is not None else 0.0
+                if score is None:
+                    return None, True  # None indicates parsing error
+                return float(score), False  # Successfully got a score
             except Exception as error:
-                logging.warning(f"Error in enhanced_cv_matching: {error}")
-                return 0.0
+                logging.warning(f"⚠️ Error in enhanced_cv_matching: {error}")
+                return None, True
 
-        batch_df.loc[score_mask_advanced, "score"] = batch_df.loc[
-            score_mask_advanced, "post"
-        ].apply(safe_enhanced_matching)
+        enhanced_results = batch_df.loc[score_mask_advanced, "post"].apply(
+            safe_enhanced_matching
+        )
+        # Store scores as is, allowing None values
+        batch_df.loc[score_mask_advanced, "score"] = enhanced_results.apply(
+            lambda x: x[0]
+        )
+        batch_df.loc[score_mask_advanced, "parsing_error"] = enhanced_results.apply(
+            lambda x: x[1]
+        )
 
-        # Post parsing - only for posts meeting all criteria
+        parsing_errors = batch_df[batch_df["parsing_error"]].shape[0]
+        null_scores = batch_df[batch_df["score"].isna()].shape[0]
+        logging.info(
+            f"📊 Results:\n"
+            f"  - Posts processed: {posts_for_enhanced}\n"
+            f"  - Parsing errors: {parsing_errors}\n"
+            f"  - NULL scores: {null_scores}\n"
+            f"  - Error rate: {(parsing_errors/posts_for_enhanced)*100:.1f}% if processed"
+        )
+
+        # Final parsing
+        logging.info("\n" + "-" * 40)
+        logging.info("STEP 5: Structured Data Parsing")
+        logging.info("-" * 40)
         parsing_mask = (
             batch_df["is_single_job_post"]
             & batch_df["is_job_post"]
-            & (batch_df["score"] >= MATCH_SCORE_THRESHOLD)
+            & (
+                (batch_df["score"] >= MATCH_SCORE_THRESHOLD)
+                | batch_df["parsing_error"]
+                | batch_df["score"].isna()
+            )
+        )
+        posts_to_parse = parsing_mask.sum()
+        logging.info(
+            f"📝 Parsing {posts_to_parse} posts:\n"
+            f"  - Met score threshold: {(batch_df['score'] >= MATCH_SCORE_THRESHOLD).sum()}\n"
+            f"  - With NULL scores: {null_scores}\n"
+            f"  - With parsing errors: {parsing_errors}"
         )
 
-        # Safely handle job post parsing with proper error handling
         def safe_job_parsing(post: str) -> str:
             try:
                 parsed_data = job_post_parsing(post)
-                if parsed_data:
-                    return json.dumps(parsed_data)
-                return "{}"
+                if not parsed_data:
+                    logging.info("⚠️ job_post_parsing returned empty result")
+                    return "{}"
+
+                # Handle case where LLM returns action-based format
+                if isinstance(parsed_data, dict) and "action" in parsed_data:
+                    logging.info(
+                        f"⚠️ LLM returned action format instead of job post data: {json.dumps(parsed_data)[:200]}..."
+                    )
+                    return "{}"
+
+                # Validate the parsed data structure
+                if not isinstance(parsed_data, dict):
+                    logging.info(f"⚠️ Unexpected parsed_data type: {type(parsed_data)}")
+                    return "{}"
+
+                try:
+                    # Attempt to serialize to ensure valid JSON
+                    json_str = json.dumps(parsed_data)
+                    return json_str
+                except (TypeError, ValueError) as json_error:
+                    logging.info(
+                        f"⚠️ Failed to serialize parsed data: {json_error}. Data: {parsed_data}"
+                    )
+                    return "{}"
+
             except Exception as error:
-                logging.warning(f"Error in job_post_parsing: {error}")
+                logging.info(
+                    f"⚠️ Error in job_post_parsing: {error}\nPost preview: {post[:200]}...",
+                    exc_info=True,
+                )
                 return "{}"
 
         batch_df.loc[parsing_mask, "post_structured"] = batch_df.loc[
             parsing_mask, "post"
         ].apply(safe_job_parsing)
 
-        # Set timestamp
+        # Set timestamp and prepare final results
         batch_df.loc[:, "created_at"] = pd.Timestamp(
             datetime.datetime.now(datetime.UTC)
         ).tz_localize(None)
 
-        # Return only rows with valid structured posts
-        return batch_df[batch_df["post_structured"] != "{}"]
+        # Final results
+        final_df = batch_df[batch_df["post_structured"] != "{}"]
+        final_count = len(final_df)
+
+        logging.info("\n" + "=" * 80)
+        logging.info("🏁 FINAL RESULTS")
+        logging.info("=" * 80)
+        logging.info(
+            f"Pipeline Summary:\n"
+            f"  Initial posts: {initial_count}\n"
+            f"  ↳ Job posts: {job_posts_count} ({(job_posts_count/initial_count)*100:.1f}%)\n"
+            f"    ↳ Single posts: {single_posts_count} ({(single_posts_count/job_posts_count)*100:.1f}%)\n"
+            f"      ↳ Above threshold: {threshold_count} ({(threshold_count/single_posts_count)*100:.1f}%)\n"
+            f"        ↳ Final valid posts: {final_count} ({(final_count/initial_count)*100:.1f}% of initial)"
+        )
+        logging.info("=" * 80)
+
+        return final_df
 
     except Exception as error:
-        logging.error(f"Error processing batch: {error!s}", exc_info=True)
+        logging.error(f"❌ Error processing batch: {error!s}", exc_info=True)
         return None
-
-
-@retry(
-    stop=stop_after_attempt(MAX_RETRY_ATTEMPTS),
-    wait=wait_exponential(multiplier=1, min=2, max=8),
-)
-def process_batch_with_retry(
-    batch_df: pd.DataFrame, cv_content: str
-) -> pd.DataFrame | None:
-    """
-    Process batch with retry logic.
-
-    Args:
-        batch_df: DataFrame containing batch data
-        cv_content: CV content string
-    Returns:
-        Optional[pd.DataFrame]: Processed DataFrame or None if processing fails
-    """
-    try:
-        return process_batch(batch_df, cv_content)
-    except Exception as error:
-        logging.error(f"Batch processing failed: {error!s}", exc_info=True)
-        raise
 
 
 def clean_and_move_data():
@@ -242,7 +337,7 @@ def clean_and_move_data():
             logging.info("No data to process: DataFrame is empty")
             return
 
-        # Process batches with retry logic
+        # Process batches
         for batch_num, i in enumerate(range(0, len(df), DATA_BATCH_SIZE), 1):
             try:
                 batch_df = df[i : i + DATA_BATCH_SIZE].copy()
@@ -251,7 +346,7 @@ def clean_and_move_data():
                 if "score" in batch_df.columns:
                     batch_df["score"] = batch_df["score"].astype(float)
 
-                processed_df = process_batch_with_retry(batch_df, str(cv_content))
+                processed_df = process_batch(batch_df, str(cv_content))
 
                 if processed_df is not None and not processed_df.empty:
                     # Ensure all numeric columns are properly converted to the right type
