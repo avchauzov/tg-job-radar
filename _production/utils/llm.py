@@ -356,30 +356,55 @@ if __name__ == "__main__":
     # Test data
     sample_cv = """
     John Doe
-    Software Engineer
+    Senior Software Engineer
 
     Experience:
-    - 5 years Python development
-    - Backend architecture and API design
-    - Team leadership experience
+    - 7 years Python development
+    - Lead backend architect for high-scale systems
+    - Team leadership experience managing 5-person teams
+    - Microservices architecture design and implementation
 
-    Skills: Python, Django, FastAPI, PostgreSQL, Redis
+    Technical Skills:
+    - Languages: Python, Go, TypeScript
+    - Frameworks: Django, FastAPI, React
+    - Databases: PostgreSQL, MongoDB, Redis
+    - Cloud: AWS (ECS, Lambda, S3), Docker, Kubernetes
+    - Tools: Git, CI/CD, Prometheus, Grafana
+
+    Certifications:
+    - AWS Solutions Architect Professional
+    - Kubernetes CKA
     """
 
     sample_job_post = """
-    Senior Software Engineer
+    Senior Backend Engineer
 
-    Company: Tech Corp
-    Location: San Francisco, CA
+    Company: TechCorp Solutions
+    Location: Berlin, Germany (Hybrid)
+    Department: Engineering
 
-    We're looking for a Senior Python Developer with:
-    - 5+ years experience
-    - Strong backend development skills
-    - Leadership abilities
+    About the Role:
+    We're seeking an experienced Backend Engineer to join our platform team.
 
-    Salary: $150k-$180k
-    Remote: Hybrid
-    Visa: Available
+    Required Skills:
+    - 5+ years Python development experience
+    - Strong expertise in Django and FastAPI
+    - Advanced PostgreSQL and Redis knowledge
+    - Experience with Docker and Kubernetes
+    - Microservices architecture design
+    - AWS cloud services (ECS, Lambda)
+
+    Nice to Have:
+    - Go programming experience
+    - MongoDB experience
+    - Prometheus/Grafana monitoring
+    - TypeScript/React for full-stack contributions
+    - AWS certifications
+
+    Benefits:
+    - Competitive salary: €85K-120K
+    - Flexible hybrid work arrangement
+    - Professional development budget
     """
 
     # Test all functions
@@ -406,15 +431,31 @@ if __name__ == "__main__":
 
     print("\n=== Testing clean_job_post_values ===")
     sample_response = {
-        "job_title": "Senior Software Engineer",
-        "location": "San Francisco, CA",
-        "remote_status": "hybrid",
-        "salary_range": "$150k-$180k",
-        "company_name": "Tech Corp",
-        "description": "We're looking for a Senior Python Developer",
+        "job_title": "Senior Backend Engineer",
         "seniority_level": "Senior",
-        "visa_sponsorship": True,
-        "relocation_support": None,
+        "location": "Berlin, Germany (Hybrid)",
+        "salary_range": "€85K-120K",
+        "company_name": "TechCorp Solutions",
+        "description": "We're seeking an experienced Backend Engineer to join our platform team.",
+        "required_skills": [
+            "Python",
+            "Django",
+            "FastAPI",
+            "PostgreSQL",
+            "Redis",
+            "Docker",
+            "Kubernetes",
+            "AWS",
+            "Microservices",
+        ],
+        "preferred_skills": [
+            "Go",
+            "MongoDB",
+            "Prometheus",
+            "Grafana",
+            "TypeScript",
+            "React",
+        ],
     }
     cleaned = clean_job_post_values(sample_response)
     print("Cleaned job post:")
