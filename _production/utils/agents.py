@@ -459,106 +459,100 @@ def enhanced_cv_matching(cv_content: str, job_post: str) -> float | None:
         cv_content = validate_input_text(cv_content, "CV content", min_length=100)
         job_post = validate_input_text(job_post, "Job post", min_length=50)
 
+        # Create agent only once and cache the result
         agent = create_cv_matching_agent(cv_content)
 
-        result = agent.invoke(
-            {
-                "input": f"""Analyze job post compatibility with CV.
-
-                Use comprehensive_cv_analysis tool with ONLY the job post as input.
-
-                After getting scores, calculate:
-                final_score = (experience_score * 0.40) + (skills_score * 0.45) + (soft_skills_score * 0.15)
-
-                Return JSON with:
-                {{
-                    "experience_match": {{ "score": 85, "reasoning": "..." }},
-                    "skills_match": {{ "score": 90, "reasoning": "..." }},
-                    "soft_skills_match": {{ "score": 88, "reasoning": "..." }},
-                    "final_score": 87,
-                    "final_reasoning": "Overall assessment..."
-                }}
-
-                Job Post: {job_post}
-                """,
-                "chat_history": [],
-            }
-        )
-
-        # Enhanced error handling for result parsing
-        if not isinstance(result, dict) or "output" not in result:
-            error_msg = "Unexpected agent output format"
-            logging.error(f"{error_msg}: {result}")
-            raise LLMParsingError(
-                error_msg, response=str(result)[:1000] if result else None
-            )
-
+        # Single LLM call with comprehensive error handling
         try:
-            # Extract the output from the agent result
-            output_data = result["output"]
+            result = agent.invoke(
+                {
+                    "input": f"""Analyze job post compatibility with CV.
+                    Use comprehensive_cv_analysis tool with ONLY the job post as input.
+                    After getting scores, calculate:
+                    final_score = (experience_score * 0.40) + (skills_score * 0.45) + (soft_skills_score * 0.15)
+                    Return ONLY a JSON object with the final_score field.
+                    Job Post: {job_post}
+                    """,
+                    "chat_history": [],
+                }
+            )
+        except Exception as llm_error:
+            logging.error(f"LLM call failed: {llm_error}")
+            return None
 
-            # Check if the output is already a dictionary (parsed JSON)
+        # Early validation of result structure
+        if not isinstance(result, dict) or "output" not in result:
+            logging.error(f"Invalid agent output format: {result}")
+            return None
+
+        output_data = result["output"]
+
+        # Extract scores from the comprehensive_cv_analysis observation
+        try:
+            # If we have a direct observation with scores
             if isinstance(output_data, dict) and "experience_match" in output_data:
-                parsed_output = output_data
-            else:
-                # Try to extract JSON if the output is a string
-                if isinstance(output_data, str):
-                    parsed_output = parse_llm_response(output_data)
-                else:
-                    # Convert to string if it's not already a string
-                    parsed_output = parse_llm_response(str(output_data))
+                experience_score = float(output_data["experience_match"]["score"])
+                skills_score = float(output_data["skills_match"]["score"])
+                soft_skills_score = float(output_data["soft_skills_match"]["score"])
 
-            # Check if there's a final_score already calculated
-            if "final_score" in parsed_output and isinstance(
-                parsed_output["final_score"], int | float
-            ):
-                final_score = float(parsed_output["final_score"])
-                logging.info(f"Using pre-calculated final score: {final_score}")
+                final_score = round(
+                    (experience_score * 0.40)
+                    + (skills_score * 0.45)
+                    + (soft_skills_score * 0.15)
+                )
                 return final_score
 
-            # Validate the response structure
-            validate_cv_analysis_response(parsed_output)
+            # Try to find the observation in the agent's thought process
+            if "Observation:" in str(output_data):
+                observation_text = (
+                    str(output_data).split("Observation:", 1)[1].split("Thought:", 1)[0]
+                )
+                try:
+                    observation_data = parse_llm_response(observation_text)
+                    experience_score = float(
+                        observation_data["experience_match"]["score"]
+                    )
+                    skills_score = float(observation_data["skills_match"]["score"])
+                    soft_skills_score = float(
+                        observation_data["soft_skills_match"]["score"]
+                    )
 
-            # Extract and convert scores to float
-            try:
-                experience_score = float(parsed_output["experience_match"]["score"])
-                skills_score = float(parsed_output["skills_match"]["score"])
-                soft_skills_score = float(parsed_output["soft_skills_match"]["score"])
-            except (ValueError, TypeError) as error:
-                error_msg = "Failed to convert scores to float"
-                logging.error(f"{error_msg}: {error}")
-                raise LLMParsingError(
-                    error_msg, response=str(output_data)[:1000] if output_data else None
-                ) from error
+                    final_score = round(
+                        (experience_score * 0.40)
+                        + (skills_score * 0.45)
+                        + (soft_skills_score * 0.15)
+                    )
+                    return final_score
+                except (LLMParsingError, ValueError, KeyError) as error:
+                    logging.error(f"Failed to parse observation data: {error}")
+                    return None
 
-            # Calculate weighted final score
-            final_score = int(
-                (skills_score * 0.45)
-                + (experience_score * 0.40)
-                + (soft_skills_score * 0.15)
-            )
+            # Try to extract final score from text response
+            import re
 
-            logging.info(f"Successfully calculated match score: {final_score}")
-            return final_score
+            # First try to extract from JSON structure
+            if isinstance(output_data, dict):
+                if "action_input" in output_data and isinstance(
+                    output_data["action_input"], dict
+                ):
+                    if "final_score" in output_data["action_input"]:
+                        return round(float(output_data["action_input"]["final_score"]))
 
-        except LLMParsingError:
-            # Re-raise parsing errors without wrapping
-            raise
-        except (KeyError, ValueError, TypeError) as error:
-            error_msg = f"Failed to parse agent output structure: {error!s}"
-            logging.error(error_msg)
-            raise LLMParsingError(
-                error_msg,
-                response=str(result["output"])[:1000] if "output" in result else None,
-            ) from error
+            # Then try regex pattern for text-based responses
+            score_match = re.search(r"final_score.*?=.*?(\d+\.?\d*)", str(output_data))
+            if score_match:
+                return round(float(score_match.group(1)))
+
+            logging.error(f"Could not extract score from output: {output_data}")
+            return None
+
+        except (ValueError, TypeError, KeyError) as error:
+            logging.error(f"Failed to calculate score: {error}")
+            return None
 
     except ValueError as error:
-        # Handle input validation errors
-        logging.error(f"Input validation error in CV matching: {error}")
-        return None
-    except (LLMParsingError, LLMError) as error:
-        logging.error(f"CV matching error: {error!s}")
+        logging.error(f"Input validation error: {error}")
         return None
     except Exception as error:
-        logging.error(f"Unexpected error in CV matching: {error!s}")
+        logging.error(f"Unexpected error: {error}")
         return None
