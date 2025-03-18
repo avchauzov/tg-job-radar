@@ -112,27 +112,30 @@ For each job posting, extract and standardize the following fields:
 - job_title: The standardized job title (capitalize words)
 - seniority_level: Exactly one of: "Junior", "Mid-Level", "Senior", "Lead", "Principal", "Executive", or empty string if unclear
 - location: Format as follows:
-    * If full details known: "City, State/Province, Country"
-    * If only city and country known: "City, Country"
-    * If only country known: "Country"
+    * Physical location + work type: "City, State/Province, Country (Remote)" or "London, UK (Hybrid)" or "Berlin, Germany (On-site)"
+    * Remote only: "Remote" or "Remote, US only" or "Remote, EMEA"
     * Always capitalize proper nouns
-    Never return partial/incomplete locations with commas (e.g., avoid "UK, , ")
-- remote_status: Exactly one of: "Remote", "Hybrid", "On-site", or empty string if unclear
-- relocation_support: Exactly one of: "Yes", "No", or empty string if not specified
-- visa_sponsorship: Exactly one of: "Yes", "No", or empty string if not specified
-- salary_range: Standardized format like "$100K-$150K" or empty string if not provided
+    Never return partial/incomplete locations
+- salary_range: Standardized format like "£100K-150K" or "€100K-150K" (with appropriate currency sign) or empty string if not provided
 - company_name: Clean company name (capitalize words)
 - description: Cleaned job description
+- required_skills: List of most important technical skills and requirements, comma-separated, in order of importance
+- preferred_skills: List of nice-to-have skills, comma-separated, in order of importance
 
 Important rules for standardization:
 1. For any missing, undefined, or unclear values, always use an empty string ('') instead of 'N/A', 'None', 'NULL', or similar text
 2. Be consistent with capitalization:
    * Use proper capitalization for job titles, company names, and locations
-   * Keep "Yes"/"No" responses capitalized
-   * Keep status values ("Remote", "Hybrid", "On-site") capitalized
+   * Keep work type values ("Remote", "Hybrid", "On-site") capitalized
 3. Remove any special characters or unnecessary whitespace
 4. Ensure values match the expected formats described above
 5. If information is ambiguous, prefer empty string over guessing
+6. For skills:
+   * Extract only technical and professional skills (not soft skills)
+   * Order by importance/priority
+   * Use standard terminology (e.g., "Python" not "python programming")
+   * Remove duplicates
+   * Limit to most relevant 10-15 skills per category
 """
 
 JOB_POST_PARSING_PROMPT = """You are an expert at parsing job descriptions.
@@ -141,7 +144,16 @@ Extract and structure job posting information accurately.
 Rules:
     - For any missing or unclear information, use empty string ('')
     - Normalize seniority levels to: Junior, Mid-Level, Senior, Lead, Principal, Executive
-    - For remote_status, use only: "Remote", "Hybrid", "On-site", or empty string if unclear
+    - Format location as "City, Country (Remote/Hybrid/On-site)" or just "Remote" for fully remote positions
     - Keep the description concise but include all important details and required skills
-    - Extract salary range if mentioned, standardize to format like "$100K-$150K"
+    - Extract salary range if mentioned, standardize to format like "£100K-150K" or "€100K-150K" with appropriate currency sign
+    - Extract and categorize skills:
+        * required_skills: Must-have technical and professional skills, ordered by importance
+        * preferred_skills: Nice-to-have skills, ordered by importance
+    - For skills extraction:
+        * Focus on technical and professional skills only
+        * Use standardized terminology
+        * Remove duplicates
+        * Limit to most relevant 10-15 skills per category
+        * Order by importance/priority
 """
