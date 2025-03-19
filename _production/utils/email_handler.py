@@ -1,49 +1,57 @@
-"""Utilities for email formatting and sending."""
+"""Email handling utilities for job notifications."""
 
-import json
 import logging
 import os
 import smtplib
-from typing import Any, Dict
+from typing import Any
 
 from _production import EMAIL
 
-JsonDict = Dict[str, Any]
+JsonDict = dict[str, Any]
 
 
 def format_email_content(df):
-    """Format job posts into HTML email content using structured JSON data"""
+    """Format job posting data into HTML email content.
 
-    def get_formatted_fields(job_data):
-        """Get formatted fields in the correct order"""
+    Args:
+        df: DataFrame containing job posting information.
+
+    Returns:
+        str: Formatted HTML content for email.
+    """
+
+    def format_job_fields(job_dict):
+        """Format individual job posting fields into HTML.
+
+        Args:
+            job_dict: Dictionary containing job posting data.
+
+        Returns:
+            list: Formatted HTML strings for each field.
+        """
         # Define field order and their display names
         field_order = [
             ("job_title", "Position"),
-            ("seniority_level", "Level"),
-            ("company_name", "Company"),
             ("location", "Location"),
-            ("remote_status", "Work Mode"),
+            ("skills", "Skills"),
+            ("seniority_level", "Level"),
             ("salary_range", "Salary"),
-            ("relocation_support", "Relocation Support"),
-            ("visa_sponsorship", "Visa Sponsorship"),
             ("description", "Description"),
+            ("company_name", "Company"),
         ]
 
         formatted_fields = []
-        job_dict = json.loads(job_data) if isinstance(job_data, str) else job_data
 
         for field, display_name in field_order:
             value = job_dict.get(field)
             if value is not None:  # Only append if there's a value
-                # Convert boolean to "Yes"
-                value = "Yes" if isinstance(value, bool) and value else value
                 formatted_fields.append(f"<strong>{display_name}:</strong> {value}")
 
         return formatted_fields
 
     html_parts = []
     for _, row in df.iterrows():
-        formatted_fields = get_formatted_fields(row["post_structured"])
+        formatted_fields = format_job_fields(row["post_structured"])
         if formatted_fields:
             job_html = f"""
             <div style="margin-bottom: 20px; padding: 15px; border: 1px solid #ddd; border-radius: 5px;">
@@ -67,6 +75,17 @@ def format_email_content(df):
 
 
 def send_email(message):
+    """Send an email using SMTP with configured credentials.
+
+    Args:
+        message: Email message object to send.
+
+    Returns:
+        bool: True if email was sent successfully, False otherwise.
+
+    Raises:
+        SMTPAuthenticationError: If authentication with the SMTP server fails.
+    """
     try:
         with smtplib.SMTP(
             os.getenv("SMTP_SERVER", "smtp.gmail.com"), int(os.getenv("SMTP_PORT", 587))
