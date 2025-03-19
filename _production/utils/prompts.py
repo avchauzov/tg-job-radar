@@ -118,9 +118,13 @@ For each job posting, extract and standardize the following fields:
     Never return partial/incomplete locations
 - salary_range: Standardized format like "£100K-150K" or "€100K-150K" (with appropriate currency sign) or empty string if not provided
 - company_name: Clean company name (capitalize words)
-- description: Cleaned job description
-- required_skills: List of most important technical skills and requirements, comma-separated, in order of importance
-- preferred_skills: List of nice-to-have skills, comma-separated, in order of importance
+- description: Cleaned job description containing only essential information:
+    * Key responsibilities and requirements
+    * Core job duties
+    * Critical qualifications
+    * Important company context
+    * Remove any fluff, marketing language, or redundant information
+- skills: List of all technical and professional skills, comma-separated, ordered by importance (most critical first)
 
 Important rules for standardization:
 1. For any missing, undefined, or unclear values, always use an empty string ('') instead of 'N/A', 'None', 'NULL', or similar text
@@ -132,10 +136,10 @@ Important rules for standardization:
 5. If information is ambiguous, prefer empty string over guessing
 6. For skills:
    * Extract only technical and professional skills (not soft skills)
-   * Order by importance/priority
+   * Order by importance/priority (most critical first)
    * Use standard terminology (e.g., "Python" not "python programming")
    * Remove duplicates
-   * Limit to most relevant 10-15 skills per category
+   * Limit to most relevant 15-20 skills total
 """
 
 JOB_POST_PARSING_PROMPT = """You are an expert at parsing job descriptions.
@@ -145,15 +149,18 @@ Rules:
     - For any missing or unclear information, use empty string ('')
     - Normalize seniority levels to: Junior, Mid-Level, Senior, Lead, Principal, Executive
     - Format location as "City, Country (Remote/Hybrid/On-site)" or just "Remote" for fully remote positions
-    - Keep the description concise but include all important details and required skills
+    - Clean the description to contain only essential information:
+        * Key responsibilities and requirements
+        * Core job duties
+        * Critical qualifications
+        * Important company context
+        * Remove any fluff, marketing language, or redundant information
     - Extract salary range if mentioned, standardize to format like "£100K-150K" or "€100K-150K" with appropriate currency sign
-    - Extract and categorize skills:
-        * required_skills: Must-have technical and professional skills, ordered by importance
-        * preferred_skills: Nice-to-have skills, ordered by importance
-    - For skills extraction:
+    - Extract skills:
+        * Combine all technical and professional skills into a single list
+        * Order by importance (most critical first)
         * Focus on technical and professional skills only
         * Use standardized terminology
         * Remove duplicates
-        * Limit to most relevant 10-15 skills per category
-        * Order by importance/priority
+        * Limit to most relevant 15-20 skills total
 """
