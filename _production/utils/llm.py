@@ -51,12 +51,12 @@ class CleanJobPost(BaseModel):
     job_title: str | None
     seniority_level: str | None
     location: str | None
-    remote_status: str | None
-    relocation_support: bool | None
-    visa_sponsorship: bool | None
     salary_range: str | None
     company_name: str | None
     description: str | None
+    skills: (
+        str | None
+    )  # Combined technical and professional skills, ordered by importance
 
 
 def validate_text_input(
@@ -261,12 +261,12 @@ def job_post_parsing(
             job_title: str
             seniority_level: str
             location: str
-            remote_status: str
-            relocation_support: bool | None
-            visa_sponsorship: bool | None
             salary_range: str | None
             company_name: str
             description: str
+            skills: (
+                str  # Combined technical and professional skills, ordered by importance
+            )
 
         messages = [
             {
@@ -343,12 +343,10 @@ def clean_job_post_values(response: dict[str, Any]) -> dict[str, Any]:
             job_title=None,
             seniority_level=None,
             location=None,
-            remote_status=None,
-            relocation_support=None,
-            visa_sponsorship=None,
             salary_range=None,
             company_name=None,
             description=None,
+            skills=None,
         ).model_dump()
 
 
@@ -437,25 +435,7 @@ if __name__ == "__main__":
         "salary_range": "€85K-120K",
         "company_name": "TechCorp Solutions",
         "description": "We're seeking an experienced Backend Engineer to join our platform team.",
-        "required_skills": [
-            "Python",
-            "Django",
-            "FastAPI",
-            "PostgreSQL",
-            "Redis",
-            "Docker",
-            "Kubernetes",
-            "AWS",
-            "Microservices",
-        ],
-        "preferred_skills": [
-            "Go",
-            "MongoDB",
-            "Prometheus",
-            "Grafana",
-            "TypeScript",
-            "React",
-        ],
+        "skills": "Python, Django, FastAPI, PostgreSQL, Redis, Docker, Kubernetes, AWS, Microservices, Go, MongoDB, Prometheus, Grafana, TypeScript, React",
     }
     cleaned = clean_job_post_values(sample_response)
     print("Cleaned job post:")
