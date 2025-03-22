@@ -8,6 +8,14 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
+SERVER_URL: str = os.getenv("SERVER_URL", "")
+
+# InfluxDB configuration
+INFLUXDB: dict[str, str] = {
+    "TOKEN": os.getenv("INFLUXDB_TOKEN", ""),
+    "ORG": os.getenv("INFLUXDB_ORG", ""),
+    "BUCKET": os.getenv("INFLUXDB_BUCKET", ""),
+}
 
 # Group related environment variables using dictionaries for better organization
 DATABASE: dict[str, str] = {
