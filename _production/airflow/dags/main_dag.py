@@ -1,24 +1,24 @@
 """
-Telegram Job Radar DAG
+Telegram Job Radar DAG.
 
 This DAG performs the following operations:
 1. Scrapes job postings from specified Telegram channels
 2. Cleans and processes the collected data
 3. Sends notification about the results
 
-Schedule: Daily
+Schedule: Daily at 6 AM GMT
 """
 
 import sys
+from datetime import datetime, timedelta
+
+from airflow import DAG
+from airflow.operators.python import PythonOperator
 
 project_path = "/home/tg-job-radar"
 if project_path not in sys.path:
     sys.path.append(project_path)
 
-from datetime import datetime, timedelta
-
-from airflow import DAG
-from airflow.operators.python import PythonOperator
 
 from _production.airflow.plugins.production.email_notifications import notify_me
 from _production.airflow.plugins.raw.data_collection import scrape_tg
@@ -29,7 +29,7 @@ default_args = {
     "depends_on_past": False,
     "start_date": datetime(2024, 1, 1),
     "retries": 3,
-    "retry_delay": timedelta(minutes=5),
+    "retry_delay": timedelta(minutes=60),
     "email": ["avchauzov.dev@gmail.com"],
     "email_on_failure": True,
     "email_on_retry": False,
@@ -39,7 +39,7 @@ default_args = {
 with DAG(
     "tg-job-radar",
     default_args=default_args,
-    schedule=timedelta(days=1),
+    schedule="0 6 * * *",  # Run at 6 AM GMT daily
     catchup=False,
     max_active_runs=1,
 ) as dag:
