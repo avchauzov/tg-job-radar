@@ -1,6 +1,10 @@
+"""Module for collecting and processing raw job post data from Telegram channels."""
+
 import datetime
 import logging
-from typing import Any, Dict, List
+import time
+from dataclasses import dataclass, field
+from typing import Any
 
 from _production import DATA_BATCH_SIZE, RAW_DATA__TG_POSTS
 from _production.config.config import (
@@ -10,6 +14,7 @@ from _production.config.config import (
 )
 from _production.config.config_db import RAW_DATA__TG_POSTS__COLUMNS
 from _production.utils.common import generate_hash, process_date, setup_logging
+from _production.utils.influxdb import store_metrics
 from _production.utils.sql import batch_insert_to_db, fetch_from_db
 from _production.utils.text import (
     clean_job_description,
@@ -22,10 +27,10 @@ setup_logging(__file__[:-3])
 
 
 def process_batch(
-    results: List[Dict[str, Any]],
+    results: list[dict[str, Any]],
     table: str,
-    columns: List[str],
-    key_columns: List[str],
+    columns: list[str],
+    key_columns: list[str],
 ) -> int:
     """Process and insert a batch of results."""
     try:
@@ -34,8 +39,8 @@ def process_batch(
         batch_insert_to_db(table, columns, key_columns, results)
         logging.info(f"Inserting batch of {len(results)} messages into database.")
         return len(results)
-    except Exception as e:
-        logging.error(f"Error processing batch: {str(e)}")
+    except Exception as error:
+        logging.error(f"Error processing batch: {error!s}")
         raise
 
 
@@ -51,7 +56,52 @@ def get_entity_title(entity):
     return str(entity.id)  # Fallback to entity ID
 
 
-def scrape_channel(tg_client, channel, last_date):
+@dataclass
+class ScrapingStats:
+    """Statistics for the scraping process."""
+
+    total_messages_checked: int = 0
+    messages_without_text: int = 0
+    messages_without_date: int = 0
+    messages_without_keywords: int = 0
+    duplicate_messages: int = 0
+    successful_jobs: int = 0
+    post_dates: list[datetime.datetime] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert stats to a dictionary for logging."""
+        if not self.post_dates:
+            return {
+                "total_messages_checked": self.total_messages_checked,
+                "messages_without_text": self.messages_without_text,
+                "messages_without_date": self.messages_without_date,
+                "messages_without_keywords": self.messages_without_keywords,
+                "duplicate_messages": self.duplicate_messages,
+                "successful_jobs": self.successful_jobs,
+                "post_dates": {"min": None, "max": None, "average": None},
+            }
+
+        # Calculate average date by converting to timestamps
+        timestamps = [date.timestamp() for date in self.post_dates]
+        avg_timestamp = sum(timestamps) / len(timestamps)
+        avg_date = datetime.datetime.fromtimestamp(avg_timestamp, tz=datetime.UTC)
+
+        return {
+            "total_messages_checked": self.total_messages_checked,
+            "messages_without_text": self.messages_without_text,
+            "messages_without_date": self.messages_without_date,
+            "messages_without_keywords": self.messages_without_keywords,
+            "duplicate_messages": self.duplicate_messages,
+            "successful_jobs": self.successful_jobs,
+            "post_dates": {
+                "min": min(self.post_dates).isoformat(),
+                "max": max(self.post_dates).isoformat(),
+                "average": avg_date.isoformat(),
+            },
+        }
+
+
+def scrape_channel(tg_client, channel, last_date, stats: ScrapingStats):
     """Scrape a single channel and return the number of processed messages."""
     entity = tg_client.get_entity(channel)
     link_header = get_channel_link_header(entity)
@@ -72,13 +122,18 @@ def scrape_channel(tg_client, channel, last_date):
         where_condition="date >= NOW() - INTERVAL '30 days'",
     )[1]
 
+    logging.info(f"Checking messages in channel: {channel}")
     for message in tg_client.iter_messages(
         entity=channel, reverse=True, offset_date=last_date
     ):
-        if not message.text or not message.date:
-            logging.info(
-                f"Skipping message with missing job description or date in channel: {channel}"
-            )
+        stats.total_messages_checked += 1
+
+        if not message.text:
+            stats.messages_without_text += 1
+            continue
+
+        if not message.date:
+            stats.messages_without_date += 1
             continue
 
         job_description = message.text
@@ -86,7 +141,7 @@ def scrape_channel(tg_client, channel, last_date):
         if not contains_keywords(
             text=job_description_cleaned, keywords=DESIRED_KEYWORDS
         ):
-            logging.info(f"Skipping message (no keywords) in channel: {channel}")
+            stats.messages_without_keywords += 1
             continue
 
         # Check for duplicates
@@ -94,6 +149,7 @@ def scrape_channel(tg_client, channel, last_date):
             job_description_cleaned, recent_posts
         )
         if is_duplicate:
+            stats.duplicate_messages += 1
             logging.info(
                 f"Skipping duplicate message in channel: {channel}. "
                 f"Similarity score: {similarity_score}.\nCurrent post: {job_description_cleaned}.\nExisting post: {existing_post}"
@@ -110,6 +166,7 @@ def scrape_channel(tg_client, channel, last_date):
             "post_link": message_link,
         }
         results.append(result)
+        stats.post_dates.append(message.date)
 
         if len(results) == DATA_BATCH_SIZE:
             results_count += process_batch(
@@ -123,6 +180,7 @@ def scrape_channel(tg_client, channel, last_date):
     results_count += process_batch(
         results, RAW_DATA__TG_POSTS, RAW_DATA__TG_POSTS__COLUMNS, ["id"]
     )
+    stats.successful_jobs += results_count
 
     logging.info(f"Added {results_count} posts!")
     return results_count
@@ -130,6 +188,9 @@ def scrape_channel(tg_client, channel, last_date):
 
 def scrape_tg():
     """Main function to scrape Telegram channels."""
+    stats = ScrapingStats()
+    start_time = time.time_ns()
+
     with TG_CLIENT as tg_client:
         logging.info("Started scraping process.")
         try:
@@ -142,17 +203,17 @@ def scrape_tg():
             )
             last_date_dict = dict(last_date)
 
-            for channel in SOURCE_CHANNELS:
+            for channel in sorted(SOURCE_CHANNELS):
                 logging.info(f"Starting to scrape channel: {channel}")
                 try:
                     posts_collected = scrape_channel(
-                        tg_client, channel, last_date_dict.get(channel)
+                        tg_client, channel, last_date_dict.get(channel), stats
                     )
                 except Exception as error:
                     raise Exception(
                         f"Failed to scrape channel {channel}. "
                         f"Posts collected: {posts_collected if 'posts_collected' in locals() else 0}. "
-                        f"Error: {str(error)}"
+                        f"Error: {error!s}"
                     ) from error
 
         except Exception:
@@ -160,7 +221,76 @@ def scrape_tg():
             raise
 
         finally:
-            logging.info("Scraping process completed.")
+            # Store metrics
+            store_metrics(
+                measurement="tg-job-radar__data_collection__scraping_stats",
+                fields={
+                    "total_messages_checked": stats.total_messages_checked,
+                    "messages_without_text_rate": (
+                        (
+                            stats.messages_without_text
+                            / stats.total_messages_checked
+                            * 100
+                        )
+                        if stats.total_messages_checked > 0
+                        else 0
+                    ),
+                    "messages_without_date_rate": (
+                        (
+                            stats.messages_without_date
+                            / stats.total_messages_checked
+                            * 100
+                        )
+                        if stats.total_messages_checked > 0
+                        else 0
+                    ),
+                    "messages_without_keywords_rate": (
+                        (
+                            stats.messages_without_keywords
+                            / stats.total_messages_checked
+                            * 100
+                        )
+                        if stats.total_messages_checked > 0
+                        else 0
+                    ),
+                    "duplicate_messages_rate": (
+                        (stats.duplicate_messages / stats.total_messages_checked * 100)
+                        if stats.total_messages_checked > 0
+                        else 0
+                    ),
+                    "successful_jobs_rate": (
+                        (stats.successful_jobs / stats.total_messages_checked * 100)
+                        if stats.total_messages_checked > 0
+                        else 0
+                    ),
+                    "execution_time_ms": (time.time_ns() - start_time) / 1_000_000,
+                },
+                tags={
+                    "environment": "production",
+                    "script": "data_collection",
+                },
+            )
+
+            # Store post date statistics
+            if stats.post_dates:
+                store_metrics(
+                    measurement="tg-job-radar__data_collection__post_dates",
+                    fields={
+                        "min_date": min(stats.post_dates).timestamp(),
+                        "max_date": max(stats.post_dates).timestamp(),
+                        "avg_date": datetime.datetime.fromtimestamp(
+                            sum(date.timestamp() for date in stats.post_dates)
+                            / len(stats.post_dates),
+                            tz=datetime.UTC,
+                        ).timestamp(),
+                    },
+                    tags={
+                        "environment": "production",
+                        "script": "data_collection",
+                    },
+                )
+
+            logging.info("Scraping process completed. Metrics stored in InfluxDB.")
 
 
 if __name__ == "__main__":
