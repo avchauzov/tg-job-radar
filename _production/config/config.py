@@ -11,12 +11,16 @@ import sys
 from functools import lru_cache
 
 import anthropic
+from influxdb_client.client.influxdb_client import InfluxDBClient
+from influxdb_client.client.write_api import SYNCHRONOUS
 from telethon.sessions import StringSession
 from telethon.sync import TelegramClient
 
 from _production import (
     ANTHROPIC_API_KEY,
     DATABASE,
+    INFLUXDB,
+    SERVER_URL,
     TELEGRAM,
 )
 from _production.utils.common import get_correct_path, setup_logging
@@ -24,6 +28,27 @@ from _production.utils.sql import fetch_from_db
 from _production.utils.tg import create_session_string
 
 setup_logging(__file__[:-3])
+
+
+# Initialize InfluxDB client
+try:
+    if all(INFLUXDB.values()):
+        INFLUXDB_CLIENT = InfluxDBClient(
+            url=SERVER_URL + ":8086",
+            token=INFLUXDB["TOKEN"],
+            org=INFLUXDB["ORG"],
+        )
+        INFLUXDB_WRITE_API = INFLUXDB_CLIENT.write_api(write_options=SYNCHRONOUS)
+    else:
+        logging.warning(
+            "InfluxDB configuration is incomplete. Metrics will not be stored."
+        )
+        INFLUXDB_CLIENT = None
+        INFLUXDB_WRITE_API = None
+except Exception as error:
+    logging.error(f"Failed to initialize InfluxDB client: {error}")
+    INFLUXDB_CLIENT = None
+    INFLUXDB_WRITE_API = None
 
 # Anthropic client initialization
 try:
