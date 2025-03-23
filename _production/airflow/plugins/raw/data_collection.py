@@ -6,7 +6,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from _production import DATA_BATCH_SIZE, RAW_DATA__TG_POSTS
+from _production import DATA_BATCH_SIZE, LOOKBACK_DAYS, RAW_DATA__TG_POSTS
 from _production.config.config import (
     DESIRED_KEYWORDS,
     SOURCE_CHANNELS,
@@ -108,10 +108,22 @@ def scrape_channel(tg_client, channel, last_date, stats: ScrapingStats):
     entity_title = get_entity_title(entity)
 
     if not last_date:
-        last_date = datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=30)
-        logging.info(
-            f"No previous records found. Starting from 30 days ago: {last_date}"
+        last_date = datetime.datetime.now(datetime.UTC) - datetime.timedelta(
+            days=LOOKBACK_DAYS
         )
+        logging.info(
+            f"No previous records found. Starting from {LOOKBACK_DAYS} days ago: {last_date}"
+        )
+    else:
+        # Ensure we don't fetch messages older than LOOKBACK_DAYS days even if last_date is older
+        thirty_days_ago = datetime.datetime.now(datetime.UTC) - datetime.timedelta(
+            days=LOOKBACK_DAYS
+        )
+        if last_date < thirty_days_ago:
+            last_date = thirty_days_ago
+            logging.info(
+                f"Last date is older than {LOOKBACK_DAYS} days. Adjusting to: {last_date}"
+            )
 
     results, results_count = [], 0
 
@@ -119,7 +131,7 @@ def scrape_channel(tg_client, channel, last_date, stats: ScrapingStats):
     recent_posts = fetch_from_db(
         RAW_DATA__TG_POSTS,
         select_condition="post",
-        where_condition="date >= NOW() - INTERVAL '30 days'",
+        where_condition=f"date >= NOW() - INTERVAL '{LOOKBACK_DAYS} days'",
     )[1]
 
     logging.info(f"Checking messages in channel: {channel}")
