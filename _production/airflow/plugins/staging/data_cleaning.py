@@ -20,7 +20,9 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from _production import (
     CV_DOC_ID,
     DATA_BATCH_SIZE,
+    GDOCS_TIMEOUT_SECONDS,
     MATCH_SCORE_THRESHOLD,
+    MIN_CV_LENGTH,
     NUMBER_OF_BATCHES,
     RAW_DATA__TG_POSTS,
     STAGING_DATA__POSTS,
@@ -29,7 +31,6 @@ from _production.config.config_db import (
     RAW_TO_STAGING__WHERE,
     STAGING_DATA__POSTS__COLUMNS,
 )
-from _production.utils.agents import enhanced_cv_matching
 from _production.utils.common import setup_logging
 from _production.utils.llm import (
     job_post_detection,
@@ -40,9 +41,6 @@ from _production.utils.llm import (
 from _production.utils.sql import batch_insert_to_db, fetch_from_db
 
 setup_logging(__file__[:-3])
-
-GDOCS_TIMEOUT_SECONDS = 8
-MIN_CV_LENGTH = 128
 
 
 def validate_cv_content(cv_content: str) -> bool:
@@ -95,13 +93,17 @@ def fetch_cv_content(doc_id: str) -> str | None:
         raise
 
 
-def process_batch(batch_df: pd.DataFrame, cv_content: str) -> pd.DataFrame | None:
+def process_batch(
+    batch_df: pd.DataFrame, cv_content: str, batch_num: int, total_batches: int
+) -> pd.DataFrame | None:
     """
     Process a batch of posts against CV content for job matching.
 
     Args:
         batch_df: DataFrame containing posts to be processed
         cv_content: String content of the CV to match against
+        batch_num: Current batch number (1-based)
+        total_batches: Total number of batches to process
 
     Returns:
         DataFrame with processed job posts or None if processing fails
@@ -109,13 +111,15 @@ def process_batch(batch_df: pd.DataFrame, cv_content: str) -> pd.DataFrame | Non
     try:
         initial_count = len(batch_df)
         logging.info("=" * 80)
-        logging.info(f"🔄 BATCH PROCESSING: Starting with {initial_count} posts")
+        logging.info(
+            f"🔄 BATCH {batch_num}/{total_batches} PROCESSING: Starting with {initial_count} posts"
+        )
         logging.info("=" * 80)
 
         # Initialize columns with appropriate default values
-        batch_df.loc[:, "is_job_post"] = False
-        batch_df.loc[:, "is_single_job_post"] = False
-        batch_df.loc[:, "score"] = 0.0
+        batch_df.loc[:, "is_job_post"] = None
+        batch_df.loc[:, "is_single_job_post"] = None
+        batch_df.loc[:, "score"] = None
         batch_df.loc[:, "post_structured"] = "{}"
         batch_df.loc[:, "parsing_error"] = False
         logging.info("✓ Initialized default values for all columns")
@@ -126,45 +130,69 @@ def process_batch(batch_df: pd.DataFrame, cv_content: str) -> pd.DataFrame | Non
         logging.info("-" * 40)
         job_post_mask = batch_df["post"].apply(job_post_detection)
         batch_df.loc[job_post_mask, "is_job_post"] = True
+        batch_df.loc[~job_post_mask, "is_job_post"] = False
         job_posts_count = job_post_mask.sum()
+
+        # Calculate state statistics
+        true_count = batch_df["is_job_post"].sum()
+        false_count = (~batch_df["is_job_post"]).sum()
+        none_count = batch_df["is_job_post"].isna().sum()
+
         logging.info(
             f"📊 Results:\n"
             f"  - Total posts: {initial_count}\n"
             f"  - Job posts found: {job_posts_count}\n"
-            f"  - Success rate: {(job_posts_count/initial_count)*100:.1f}%"
+            f"  - Success rate: {(job_posts_count/initial_count)*100:.1f}%\n"
+            f"  - State distribution:\n"
+            f"    • True: {true_count} ({true_count/initial_count*100:.1f}%)\n"
+            f"    • False: {false_count} ({false_count/initial_count*100:.1f}%)\n"
+            f"    • None: {none_count} ({none_count/initial_count*100:.1f}%)"
         )
 
         # Single job post detection
         logging.info("\n" + "-" * 40)
         logging.info("STEP 2: Single Job Post Detection")
         logging.info("-" * 40)
-        single_post_mask = (batch_df["is_job_post"]) & (
+        single_post_mask = batch_df["is_job_post"] & (
             batch_df[batch_df["is_job_post"]]["post"].apply(single_job_post_detection)
         )
         batch_df.loc[single_post_mask, "is_single_job_post"] = True
+        batch_df.loc[
+            batch_df["is_job_post"] & ~single_post_mask, "is_single_job_post"
+        ] = False
         single_posts_count = single_post_mask.sum()
+
+        # Calculate state statistics
+        true_count = batch_df["is_single_job_post"].sum()
+        false_count = (~batch_df["is_single_job_post"]).sum()
+        none_count = batch_df["is_single_job_post"].isna().sum()
+
         logging.info(
             f"📊 Results:\n"
             f"  - Job posts analyzed: {job_posts_count}\n"
             f"  - Single posts found: {single_posts_count}\n"
-            f"  - Success rate: {(single_posts_count/job_posts_count)*100:.1f}% of job posts"
+            f"  - Success rate: {(single_posts_count/job_posts_count)*100:.1f}% of job posts\n"
+            f"  - State distribution:\n"
+            f"    • True: {true_count} ({true_count/initial_count*100:.1f}%)\n"
+            f"    • False: {false_count} ({false_count/initial_count*100:.1f}%)\n"
+            f"    • None: {none_count} ({none_count/initial_count*100:.1f}%)"
         )
 
         # First pass scoring
         logging.info("\n" + "-" * 40)
         logging.info("STEP 3: Initial CV Matching Score")
         logging.info("-" * 40)
-        score_mask_simple = batch_df["is_single_job_post"] & batch_df["is_job_post"]
+        score_mask_simple = batch_df["is_single_job_post"]
         posts_to_score = score_mask_simple.sum()
         logging.info(f"⚡ Quick scoring {posts_to_score} eligible posts")
 
-        def safe_match_score(post: str) -> float:
+        def safe_match_score(post: str) -> float | None:
             try:
                 score = match_cv_with_job(cv_content, post)
-                return float(score) if score is not None else 0.0
+                return float(score) if score is not None else None
             except Exception as error:
                 logging.warning(f"⚠️ Error in match_cv_with_job: {error}")
-                return 0.0
+                return None
 
         batch_df.loc[score_mask_simple, "score"] = batch_df.loc[
             score_mask_simple, "post"
@@ -173,73 +201,42 @@ def process_batch(batch_df: pd.DataFrame, cv_content: str) -> pd.DataFrame | Non
         # Score threshold analysis
         above_threshold = batch_df[batch_df["score"] >= MATCH_SCORE_THRESHOLD]
         threshold_count = len(above_threshold)
+
+        # Calculate score statistics
+        valid_scores = batch_df["score"].notna().sum()
+        null_scores = batch_df["score"].isna().sum()
+
         logging.info(
             f"📊 Results:\n"
             f"  - Posts scored: {posts_to_score}\n"
             f"  - Above threshold ({MATCH_SCORE_THRESHOLD}): {threshold_count}\n"
-            f"  - Success rate: {(threshold_count/posts_to_score)*100:.1f}% passed threshold"
-        )
-
-        # Enhanced scoring
-        logging.info("\n" + "-" * 40)
-        logging.info("STEP 4: Enhanced CV Matching")
-        logging.info("-" * 40)
-        score_mask_advanced = (
-            batch_df["is_single_job_post"] & batch_df["is_job_post"]
-        ) & (batch_df["score"] >= MATCH_SCORE_THRESHOLD)
-        posts_for_enhanced = score_mask_advanced.sum()
-        logging.info(f"🔍 Performing enhanced matching on {posts_for_enhanced} posts")
-
-        def safe_enhanced_matching(post: str) -> tuple[float | None, bool]:
-            try:
-                score = enhanced_cv_matching(cv_content, post)
-                if score is None:
-                    return None, True  # None indicates parsing error
-                return float(score), False  # Successfully got a score
-            except Exception as error:
-                logging.warning(f"⚠️ Error in enhanced_cv_matching: {error}")
-                return None, True
-
-        enhanced_results = batch_df.loc[score_mask_advanced, "post"].apply(
-            safe_enhanced_matching
-        )
-        # Store scores as is, allowing None values
-        batch_df.loc[score_mask_advanced, "score"] = enhanced_results.apply(
-            lambda x: x[0]
-        )
-        batch_df.loc[score_mask_advanced, "parsing_error"] = enhanced_results.apply(
-            lambda x: x[1]
-        )
-
-        parsing_errors = batch_df[batch_df["parsing_error"]].shape[0]
-        null_scores = batch_df[batch_df["score"].isna()].shape[0]
-        logging.info(
-            f"📊 Results:\n"
-            f"  - Posts processed: {posts_for_enhanced}\n"
-            f"  - Parsing errors: {parsing_errors}\n"
-            f"  - NULL scores: {null_scores}\n"
-            f"  - Error rate: {(parsing_errors/posts_for_enhanced)*100:.1f}% if processed"
+            f"  - Success rate: {(threshold_count/posts_to_score)*100:.1f}% passed threshold\n"
+            f"  - Score distribution:\n"
+            f"    • Valid scores: {valid_scores} ({valid_scores/initial_count*100:.1f}%)\n"
+            f"    • NULL scores: {null_scores} ({null_scores/initial_count*100:.1f}%)"
         )
 
         # Final parsing
         logging.info("\n" + "-" * 40)
         logging.info("STEP 5: Structured Data Parsing")
         logging.info("-" * 40)
-        parsing_mask = (
-            batch_df["is_single_job_post"]
-            & batch_df["is_job_post"]
-            & (
-                (batch_df["score"] >= MATCH_SCORE_THRESHOLD)
-                | batch_df["parsing_error"]
-                | batch_df["score"].isna()
-            )
+        parsing_mask = batch_df["is_single_job_post"] & (
+            batch_df["score"] >= MATCH_SCORE_THRESHOLD
         )
         posts_to_parse = parsing_mask.sum()
+
+        # Calculate parsing statistics
+        parsing_errors = batch_df["parsing_error"].sum()
+        valid_parsing = (batch_df["post_structured"] != "{}").sum()
+
         logging.info(
             f"📝 Parsing {posts_to_parse} posts:\n"
             f"  - Met score threshold: {(batch_df['score'] >= MATCH_SCORE_THRESHOLD).sum()}\n"
             f"  - With NULL scores: {null_scores}\n"
-            f"  - With parsing errors: {parsing_errors}"
+            f"  - With parsing errors: {parsing_errors}\n"
+            f"  - Parsing results:\n"
+            f"    • Valid parsing: {valid_parsing} ({valid_parsing/initial_count*100:.1f}%)\n"
+            f"    • Empty results: {posts_to_parse - valid_parsing} ({((posts_to_parse - valid_parsing)/initial_count)*100:.1f}%)"
         )
 
         def safe_job_parsing(post: str) -> str:
@@ -329,13 +326,19 @@ def clean_and_move_data():
             RAW_DATA__TG_POSTS,
             select_condition="*",
             where_condition=RAW_TO_STAGING__WHERE,
-            random_limit=DATA_BATCH_SIZE * NUMBER_OF_BATCHES,
+            order_by_condition="created_at DESC",
+            limit=DATA_BATCH_SIZE * NUMBER_OF_BATCHES,
         )
         df = pd.DataFrame(data, columns=columns)
 
         if df.empty:
             logging.info("No data to process: DataFrame is empty")
             return
+
+        total_batches = (len(df) + DATA_BATCH_SIZE - 1) // DATA_BATCH_SIZE
+        logging.info(
+            f"Starting processing of {len(df)} records in {total_batches} batches"
+        )
 
         # Process batches
         for batch_num, i in enumerate(range(0, len(df), DATA_BATCH_SIZE), 1):
@@ -346,7 +349,9 @@ def clean_and_move_data():
                 if "score" in batch_df.columns:
                     batch_df["score"] = batch_df["score"].astype(float)
 
-                processed_df = process_batch(batch_df, str(cv_content))
+                processed_df = process_batch(
+                    batch_df, str(cv_content), batch_num, total_batches
+                )
 
                 if processed_df is not None and not processed_df.empty:
                     # Ensure all numeric columns are properly converted to the right type
