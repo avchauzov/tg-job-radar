@@ -210,7 +210,7 @@ def fetch_from_db(
     where_condition: str | None = None,
     group_by_condition: str | None = None,
     order_by_condition: str | None = None,
-    random_limit: int | None = None,
+    limit: int | None = None,
     database: str = DATABASE["NAME"],
 ) -> tuple[list, list]:
     """
@@ -222,10 +222,11 @@ def fetch_from_db(
         where_condition: WHERE clause
         group_by_condition: GROUP BY clause
         order_by_condition: ORDER BY clause
-        random_limit: Limit for random selection
+        limit: Maximum number of rows to return
 
     Returns:
-        Tuple of (columns, data)
+        Tuple of (columns, data) where columns is a list of column names
+        and data is a list of tuples containing the row values
     """
     try:
         query = f"SELECT {select_condition} FROM {table}"
@@ -239,8 +240,8 @@ def fetch_from_db(
         if order_by_condition:
             query += f" ORDER BY {order_by_condition}"
 
-        if random_limit:
-            query += f" ORDER BY RANDOM() LIMIT {random_limit}"
+        if limit:
+            query += f" LIMIT {limit}"
 
         return execute_query(query, database)
 
