@@ -115,6 +115,10 @@ def scrape_channel(tg_client, channel, last_date, stats: ScrapingStats):
             f"No previous records found. Starting from {LOOKBACK_DAYS} days ago: {last_date}"
         )
     else:
+        # Ensure last_date is timezone-aware
+        if last_date.tzinfo is None:
+            last_date = last_date.replace(tzinfo=datetime.UTC)
+
         # Ensure we don't fetch messages older than LOOKBACK_DAYS days even if last_date is older
         thirty_days_ago = datetime.datetime.now(datetime.UTC) - datetime.timedelta(
             days=LOOKBACK_DAYS
@@ -238,44 +242,46 @@ def scrape_tg():
                 measurement="tg-job-radar__data_collection__scraping_stats",
                 fields={
                     "total_messages_checked": stats.total_messages_checked,
-                    "messages_without_text_rate": (
+                    "messages_without_text_rate": float(
                         (
                             stats.messages_without_text
                             / stats.total_messages_checked
                             * 100
                         )
                         if stats.total_messages_checked > 0
-                        else 0
+                        else 0.0
                     ),
-                    "messages_without_date_rate": (
+                    "messages_without_date_rate": float(
                         (
                             stats.messages_without_date
                             / stats.total_messages_checked
                             * 100
                         )
                         if stats.total_messages_checked > 0
-                        else 0
+                        else 0.0
                     ),
-                    "messages_without_keywords_rate": (
+                    "messages_without_keywords_rate": float(
                         (
                             stats.messages_without_keywords
                             / stats.total_messages_checked
                             * 100
                         )
                         if stats.total_messages_checked > 0
-                        else 0
+                        else 0.0
                     ),
-                    "duplicate_messages_rate": (
+                    "duplicate_messages_rate": float(
                         (stats.duplicate_messages / stats.total_messages_checked * 100)
                         if stats.total_messages_checked > 0
-                        else 0
+                        else 0.0
                     ),
-                    "successful_jobs_rate": (
+                    "successful_jobs_rate": float(
                         (stats.successful_jobs / stats.total_messages_checked * 100)
                         if stats.total_messages_checked > 0
-                        else 0
+                        else 0.0
                     ),
-                    "execution_time_ms": (time.time_ns() - start_time) / 1_000_000,
+                    "execution_time_ms": float(
+                        (time.time_ns() - start_time) / 1_000_000
+                    ),
                 },
                 tags={
                     "environment": "production",
