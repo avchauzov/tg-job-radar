@@ -284,8 +284,14 @@ def process_batch(
             datetime.datetime.now(datetime.UTC)
         ).tz_localize(None)
 
-        # Final results
-        final_df = batch_df[batch_df["post_structured"] != "{}"]
+        # Final results with strict filtering
+        final_df = batch_df[
+            (batch_df["is_job_post"])  # Only True job posts
+            & (
+                (batch_df["score"] >= MATCH_SCORE_THRESHOLD)  # Score above threshold
+                | (batch_df["score"].isna())  # Or score is None
+            )
+        ]
         final_count = len(final_df)
 
         logging.info("\n" + "=" * 80)
