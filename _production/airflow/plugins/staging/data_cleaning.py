@@ -12,6 +12,9 @@ import contextlib
 import datetime
 import json
 import logging
+import time
+from dataclasses import dataclass, field
+from typing import Any
 
 import pandas as pd
 import requests
@@ -32,6 +35,7 @@ from _production.config.config_db import (
     STAGING_DATA__POSTS__COLUMNS,
 )
 from _production.utils.common import setup_logging
+from _production.utils.influxdb import store_metrics
 from _production.utils.llm import (
     job_post_detection,
     job_post_parsing,
@@ -41,6 +45,79 @@ from _production.utils.llm import (
 from _production.utils.sql import batch_insert_to_db, fetch_from_db
 
 setup_logging(__file__[:-3])
+
+
+@dataclass
+class CleaningStats:
+    """Statistics for the data cleaning process."""
+
+    total_posts: int = 0
+    job_posts: int = 0
+    single_job_posts: int = 0
+    posts_above_threshold: int = 0
+    posts_below_threshold: int = 0
+    posts_with_structured_data: int = 0
+    posts_without_structured_data: int = 0
+    scores: list[float] = field(default_factory=list)
+    execution_time_ms: float = 0.0
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert stats to a dictionary for metrics storage."""
+        if not self.scores:
+            return {
+                "total_posts": self.total_posts,
+                "job_posts_rate": 0.0,
+                "single_job_posts_rate": 0.0,
+                "above_threshold_rate": 0.0,
+                "below_threshold_rate": 0.0,
+                "structured_data_rate": 0.0,
+                "score_mean": 0.0,
+                "score_std": 0.0,
+                "execution_time_ms": self.execution_time_ms,
+            }
+
+        # Calculate rates
+        job_posts_rate = (
+            (self.job_posts / self.total_posts * 100) if self.total_posts > 0 else 0.0
+        )
+        single_job_posts_rate = (
+            (self.single_job_posts / self.job_posts * 100)
+            if self.job_posts > 0
+            else 0.0
+        )
+        above_threshold_rate = (
+            (self.posts_above_threshold / self.single_job_posts * 100)
+            if self.single_job_posts > 0
+            else 0.0
+        )
+        below_threshold_rate = (
+            (self.posts_below_threshold / self.single_job_posts * 100)
+            if self.single_job_posts > 0
+            else 0.0
+        )
+        structured_data_rate = (
+            (self.posts_with_structured_data / self.posts_above_threshold * 100)
+            if self.posts_above_threshold > 0
+            else 0.0
+        )
+
+        # Calculate score statistics
+        score_mean = sum(self.scores) / len(self.scores)
+        score_std = (
+            sum((x - score_mean) ** 2 for x in self.scores) / len(self.scores)
+        ) ** 0.5
+
+        return {
+            "total_posts": int(self.total_posts),
+            "job_posts_rate": float(job_posts_rate),
+            "single_job_posts_rate": float(single_job_posts_rate),
+            "above_threshold_rate": float(above_threshold_rate),
+            "below_threshold_rate": float(below_threshold_rate),
+            "structured_data_rate": float(structured_data_rate),
+            "score_mean": float(score_mean),
+            "score_std": float(score_std),
+            "execution_time_ms": float(self.execution_time_ms),
+        }
 
 
 def validate_cv_content(cv_content: str) -> bool:
@@ -94,7 +171,11 @@ def fetch_cv_content(doc_id: str) -> str | None:
 
 
 def process_batch(
-    batch_df: pd.DataFrame, cv_content: str, batch_num: int, total_batches: int
+    batch_df: pd.DataFrame,
+    cv_content: str,
+    batch_num: int,
+    total_batches: int,
+    stats: CleaningStats,
 ) -> pd.DataFrame | None:
     """
     Process a batch of posts against CV content for job matching.
@@ -104,12 +185,14 @@ def process_batch(
         cv_content: String content of the CV to match against
         batch_num: Current batch number (1-based)
         total_batches: Total number of batches to process
+        stats: Statistics object for tracking metrics
 
     Returns:
         DataFrame with processed job posts or None if processing fails
     """
     try:
         initial_count = len(batch_df)
+        stats.total_posts += initial_count
         logging.info("=" * 80)
         logging.info(
             f"🔄 BATCH {batch_num}/{total_batches} PROCESSING: Starting with {initial_count} posts"
@@ -132,10 +215,11 @@ def process_batch(
         batch_df.loc[job_post_mask, "is_job_post"] = True
         batch_df.loc[~job_post_mask, "is_job_post"] = False
         job_posts_count = job_post_mask.sum()
+        stats.job_posts += job_posts_count
 
         # Calculate state statistics
         true_count = batch_df["is_job_post"].sum()
-        false_count = (~batch_df["is_job_post"]).sum()
+        false_count = (batch_df["is_job_post"] == False).sum()
         none_count = batch_df["is_job_post"].isna().sum()
 
         logging.info(
@@ -161,10 +245,11 @@ def process_batch(
             batch_df["is_job_post"] & ~single_post_mask, "is_single_job_post"
         ] = False
         single_posts_count = single_post_mask.sum()
+        stats.single_job_posts += single_posts_count
 
         # Calculate state statistics
         true_count = batch_df["is_single_job_post"].sum()
-        false_count = (~batch_df["is_single_job_post"]).sum()
+        false_count = (batch_df["is_single_job_post"] == False).sum()
         none_count = batch_df["is_single_job_post"].isna().sum()
 
         logging.info(
@@ -182,7 +267,8 @@ def process_batch(
         logging.info("\n" + "-" * 40)
         logging.info("STEP 3: Initial CV Matching Score")
         logging.info("-" * 40)
-        score_mask_simple = batch_df["is_single_job_post"]
+        # Create a mask that only includes True values, excluding None
+        score_mask_simple = batch_df["is_single_job_post"].fillna(False)
         posts_to_score = score_mask_simple.sum()
         logging.info(f"⚡ Quick scoring {posts_to_score} eligible posts")
 
@@ -194,13 +280,22 @@ def process_batch(
                 logging.warning(f"⚠️ Error in match_cv_with_job: {error}")
                 return None
 
+        # Apply scoring only to posts where is_single_job_post is True
         batch_df.loc[score_mask_simple, "score"] = batch_df.loc[
             score_mask_simple, "post"
         ].apply(safe_match_score)
 
+        # Track scores for statistics
+        valid_scores = batch_df.loc[score_mask_simple, "score"].dropna()
+        stats.scores.extend(valid_scores.tolist())
+
         # Score threshold analysis
         above_threshold = batch_df[batch_df["score"] >= MATCH_SCORE_THRESHOLD]
         threshold_count = len(above_threshold)
+        stats.posts_above_threshold += threshold_count
+        stats.posts_below_threshold += len(
+            batch_df[score_mask_simple & (batch_df["score"] < MATCH_SCORE_THRESHOLD)]
+        )
 
         # Calculate score statistics
         valid_scores = batch_df["score"].notna().sum()
@@ -228,6 +323,8 @@ def process_batch(
         # Calculate parsing statistics
         parsing_errors = batch_df["parsing_error"].sum()
         valid_parsing = (batch_df["post_structured"] != "{}").sum()
+        stats.posts_with_structured_data += valid_parsing
+        stats.posts_without_structured_data += posts_to_parse - valid_parsing
 
         logging.info(
             f"📝 Parsing {posts_to_parse} posts:\n"
@@ -324,6 +421,10 @@ def clean_and_move_data():
             with contextlib.suppress(RuntimeError):
                 multiprocessing.set_start_method("spawn", force=True)
 
+        # Initialize statistics
+        stats = CleaningStats()
+        start_time = time.time_ns()
+
         # Fetch and validate CV content
         cv_content = fetch_cv_content(CV_DOC_ID)
 
@@ -356,7 +457,7 @@ def clean_and_move_data():
                     batch_df["score"] = batch_df["score"].astype(float)
 
                 processed_df = process_batch(
-                    batch_df, str(cv_content), batch_num, total_batches
+                    batch_df, str(cv_content), batch_num, total_batches, stats
                 )
 
                 if processed_df is not None and not processed_df.empty:
@@ -383,6 +484,19 @@ def clean_and_move_data():
                     exc_info=True,
                 )
                 continue
+
+        # Calculate execution time
+        stats.execution_time_ms = float((time.time_ns() - start_time) / 1_000_000)
+
+        # Store metrics in InfluxDB
+        store_metrics(
+            measurement="tg-job-radar__data_cleaning__stats",
+            fields=stats.to_dict(),
+            tags={
+                "environment": "production",
+                "script": "data_cleaning",
+            },
+        )
 
         logging.info("Successfully processed all data batches")
 
