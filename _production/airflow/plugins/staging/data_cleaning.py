@@ -341,19 +341,19 @@ def process_batch(
                 parsed_data = job_post_parsing(post)
                 if not parsed_data:
                     logging.info("⚠️ job_post_parsing returned empty result")
-                    return "{}"
+                    return json.dumps({"full_description": post})
 
                 # Handle case where LLM returns action-based format
                 if isinstance(parsed_data, dict) and "action" in parsed_data:
                     logging.info(
                         f"⚠️ LLM returned action format instead of job post data: {json.dumps(parsed_data)[:200]}..."
                     )
-                    return "{}"
+                    return json.dumps({"full_description": post})
 
                 # Validate the parsed data structure
                 if not isinstance(parsed_data, dict):
                     logging.info(f"⚠️ Unexpected parsed_data type: {type(parsed_data)}")
-                    return "{}"
+                    return json.dumps({"full_description": post})
 
                 try:
                     # Attempt to serialize to ensure valid JSON
@@ -363,14 +363,14 @@ def process_batch(
                     logging.info(
                         f"⚠️ Failed to serialize parsed data: {json_error}. Data: {parsed_data}"
                     )
-                    return "{}"
+                    return json.dumps({"full_description": post})
 
             except Exception as error:
                 logging.info(
                     f"⚠️ Error in job_post_parsing: {error}\nPost preview: {post[:200]}...",
                     exc_info=True,
                 )
-                return "{}"
+                return json.dumps({"full_description": post})
 
         batch_df.loc[parsing_mask, "post_structured"] = batch_df.loc[
             parsing_mask, "post"
