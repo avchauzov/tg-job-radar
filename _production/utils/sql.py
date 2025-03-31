@@ -257,6 +257,7 @@ def move_data_with_condition(
     select_condition: str = "*",
     where_condition: str = "TRUE",
     json_columns: list[str] | None = None,
+    order_by_condition: str | None = None,
 ) -> None:
     """
     Move data between tables with condition.
@@ -267,6 +268,7 @@ def move_data_with_condition(
         select_condition (str): SELECT clause (default: "*")
         where_condition (str): WHERE clause (default: "TRUE")
         json_columns (list[str] | None): List of column names that should be serialized as JSON
+        order_by_condition (str | None): ORDER BY clause (default: None)
 
     Examples:
         >>> move_data_with_condition(
@@ -274,7 +276,8 @@ def move_data_with_condition(
         ...     "schema.target_table",
         ...     "id, name, metadata",
         ...     "created_at < NOW() - INTERVAL '1 day'",
-        ...     json_columns=["metadata"]
+        ...     json_columns=["metadata"],
+        ...     order_by_condition="score DESC NULLS LAST"
         ... )
 
     Raises:
@@ -286,9 +289,12 @@ def move_data_with_condition(
 
     try:
         json_columns = json_columns or []  # Default to empty list if None
-        select_query = (
-            f"SELECT {select_condition} FROM {source_table} WHERE {where_condition};"
-        )
+        select_query = f"""
+            SELECT {select_condition}
+            FROM {source_table}
+            WHERE {where_condition}
+            {f"ORDER BY {order_by_condition}" if order_by_condition else ""};
+        """
 
         # logging.info(f"Executing select query: {select_query}")
 
