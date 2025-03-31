@@ -193,6 +193,13 @@ def notify_me() -> None:
                 select_condition=STAGING_TO_PROD__SELECT,
                 where_condition=STAGING_TO_PROD__WHERE,
                 json_columns=["post_structured"],
+                order_by_condition="""
+                    score DESC NULLS LAST,
+                    CASE
+                        WHEN post_structured::text LIKE '%\"full_description\"%' THEN 1
+                        ELSE 0
+                    END DESC
+                """,
             )
         except Exception as move_error:
             if "no results to fetch" in str(move_error):
