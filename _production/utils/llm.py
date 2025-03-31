@@ -210,10 +210,10 @@ def match_cv_with_job(
 
                 Provide your response in this exact JSON format:
                 {{
-                    "experience_score": 85,
-                    "skills_score": 90,
-                    "soft_skills_score": 88,
-                    "final_score": 87
+                    "experience_score": <your calculated score>,
+                    "skills_score": <your calculated score>,
+                    "soft_skills_score": <your calculated score>,
+                    "final_score": <your calculated weighted score>
                 }}""",
             },
         ]
