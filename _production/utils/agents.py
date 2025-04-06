@@ -8,14 +8,14 @@ match scores based on experience, skills, and soft skills criteria.
 
 import json
 import logging
-from typing import Any
 
 from langchain.agents import AgentType, initialize_agent
 from langchain.tools import StructuredTool
-from langchain_anthropic import ChatAnthropic
+from langchain_core.language_models.base import BaseLanguageModel
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
-from _production import LLM_BASE_MODEL
+from _production.utils.custom_model import get_custom_model_client
 from _production.utils.exceptions import LLMError, LLMParsingError
 
 
@@ -96,82 +96,152 @@ def parse_llm_response(response: str | list) -> dict:
     # Strategy 2: Find JSON between curly braces
     start_idx = json_str.find("{")
     end_idx = json_str.rfind("}") + 1
-
-    if start_idx != -1 and end_idx != -1 and start_idx < end_idx:
+    if start_idx >= 0 and end_idx > start_idx:
         try:
-            extracted_json = json_str[start_idx:end_idx]
-            # Remove any markdown code block markers
-            extracted_json = extracted_json.replace("```json", "").replace("```", "")
-            return json.loads(extracted_json)
+            json_content = json_str[start_idx:end_idx]
+            return json.loads(json_content)
         except json.JSONDecodeError:
             pass  # Continue to next strategy
 
-    # Strategy 3: Look for JSON in code blocks
+    # Strategy 3: Handle the case where the response contains 'Score: XX'
+    score_pattern = r"(?i)score\s*[:=]\s*(\d+)"
     import re
 
-    json_blocks = re.findall(r"```(?:json)?\s*([\s\S]*?)```", json_str)
+    score_matches = re.findall(score_pattern, json_str)
+    if score_matches:
+        return {"score": int(score_matches[0])}
 
-    for block in json_blocks:
-        try:
-            cleaned_block = block.strip()
-            if cleaned_block.startswith("{") and cleaned_block.endswith("}"):
-                return json.loads(cleaned_block)
-        except json.JSONDecodeError:
-            continue
-
-    # Strategy 4: Try to extract a structured response even without proper JSON formatting
-    # Look for the expected fields in the response
-    expected_fields = ["experience_match", "skills_match", "soft_skills_match"]
-
-    # Check if all expected fields are in the response
-    if all(field in json_str for field in expected_fields):
-        try:
-            # Try to construct a valid JSON manually
-            result = {}
-            for field in expected_fields:
-                # Find the field and extract score
-                score_match = re.search(rf"{field}[^\d]*(\d+)", json_str)
-                if score_match:
-                    score = int(score_match.group(1))
-                    # Extract reasoning (text between this field and the next field or end)
-                    field_pos = json_str.find(field)
-                    next_field_pos = float("inf")
-                    for next_field in expected_fields:
-                        if next_field != field:
-                            pos = json_str.find(next_field, field_pos + len(field))
-                            if pos != -1 and pos < next_field_pos:
-                                next_field_pos = pos
-
-                    if next_field_pos == float("inf"):
-                        next_field_pos = len(json_str)
-
-                    # Extract text between score and next field as reasoning
-                    reasoning_text = json_str[
-                        field_pos + len(field) : next_field_pos
-                    ].strip()
-                    reasoning_text = re.sub(
-                        r'.*"reasoning":\s*"(.*?)".*',
-                        r"\1",
-                        reasoning_text,
-                        flags=re.DOTALL,
-                    )
-                    if not reasoning_text or len(reasoning_text) < 10:
-                        reasoning_text = f"Extracted score for {field}"
-
-                    result[field] = {"score": score, "reasoning": reasoning_text}
-
-            if result and all(field in result for field in expected_fields):
-                logging.warning(
-                    f"Constructed JSON from unstructured response: {result}"
-                )
-                return result
-        except Exception as e:
-            logging.error(f"Failed to manually extract structured data: {e}")
-
-    # If we got here, all strategies failed
-    error_msg = "No JSON object found in response"
+    # If all parsing attempts failed, raise an exception
+    error_msg = "Could not extract JSON from LLM response"
     logging.error(f"{error_msg}: {json_str[:200]}...")
     raise LLMParsingError(error_msg, response=json_str[:1000])
+
+
+# Custom LangChain-compatible LLM implementation
+class CustomModelLLM(BaseLanguageModel):
+    """A LangChain-compatible wrapper for our custom model client."""
+
+    def __init__(self, temperature=0.0, timeout=120, stop=None):
+        """Initialize with custom model parameters.
+
+        Args:
+            temperature: Temperature parameter for generation
+            timeout: Request timeout in seconds
+            stop: Optional stop sequences (not used by our model)
+        """
+        super().__init__()
+        self.client = get_custom_model_client()
+        self.temperature = temperature
+        self.timeout = timeout
+        self.stop = stop
+
+    def invoke(self, prompt, **kwargs):
+        """Generate a response to the given prompt.
+
+        Args:
+            prompt: The prompt text or LangChain message
+            **kwargs: Additional parameters
+
+        Returns:
+            AIMessage containing the generated text
+        """
+        # Handle both string prompts and LangChain messages
+        if isinstance(prompt, str):
+            input_text = prompt
+        elif hasattr(prompt, "content"):
+            input_text = prompt.content
+        else:
+            # Handle lists of messages
+            system_msg = ""
+            user_msgs = []
+
+            for msg in prompt:
+                if isinstance(msg, SystemMessage):
+                    system_msg = msg.content
+                elif isinstance(msg, HumanMessage):
+                    user_msgs.append(msg.content)
+
+            # If we have both system and user messages, format them
+            if system_msg and user_msgs:
+                combined_user_msgs = "\n".join(user_msgs)
+                input_text = f"{system_msg}\n\n{combined_user_msgs}"
+            else:
+                # Otherwise just join all content
+                input_text = "\n".join(
+                    msg.content for msg in prompt if hasattr(msg, "content")
+                )
+
+        # Get temperature from kwargs if provided
+        temperature = kwargs.get("temperature", self.temperature)
+
+        # Call our custom model
+        try:
+            response_text = self.client.generate(
+                prompt=input_text,
+                temperature=temperature,
+                max_tokens=kwargs.get("max_tokens", 1024),
+            )
+            return AIMessage(content=response_text)
+        except Exception as e:
+            logging.error(f"Error in CustomModelLLM: {e!s}")
+            raise LLMError(f"Failed to generate response: {e!s}")
+
+    # Implement required abstract methods
+    def generate_prompt(self, prompts, **kwargs):
+        """Generate from a list of prompts."""
+        from langchain_core.outputs import LLMResult
+
+        generations = []
+        for prompt in prompts:
+            response = self.invoke(prompt, **kwargs)
+            generations.append([{"text": response.content}])
+
+        return LLMResult(generations=generations)
+
+    async def agenerate_prompt(self, prompts, **kwargs):
+        """Async version of generate_prompt."""
+        # Just call the sync version for now
+        import asyncio
+
+        return await asyncio.get_event_loop().run_in_executor(
+            None, self.generate_prompt, prompts, **kwargs
+        )
+
+    def get_num_tokens(self, text):
+        """Get the number of tokens in a string."""
+        # Simple approximation: 1 token ≈ 4 chars
+        return len(text) // 4
+
+    @property
+    def _llm_type(self):
+        """Return the type of LLM."""
+        return "custom_model"
+
+    def predict(self, text, **kwargs):
+        """Predict method for string inputs."""
+        response = self.invoke(text, **kwargs)
+        return response.content
+
+    async def apredict(self, text, **kwargs):
+        """Async predict method for string inputs."""
+        import asyncio
+
+        return await asyncio.get_event_loop().run_in_executor(
+            None, self.predict, text, **kwargs
+        )
+
+    def predict_messages(self, messages, **kwargs):
+        """Predict method for message inputs."""
+        response = self.invoke(messages, **kwargs)
+        return response
+
+    async def apredict_messages(self, messages, **kwargs):
+        """Async predict method for message inputs."""
+        import asyncio
+
+        return await asyncio.get_event_loop().run_in_executor(
+            None, self.predict_messages, messages, **kwargs
+        )
 
 
 def create_cv_matching_agent(cv_content: str):
@@ -184,9 +254,7 @@ def create_cv_matching_agent(cv_content: str):
     Returns:
         Agent: A configured LangChain agent for CV matching
     """
-    llm = ChatAnthropic(
-        model_name=LLM_BASE_MODEL, temperature=0.0, timeout=120, stop=["```"]
-    )
+    llm = CustomModelLLM(temperature=0.0, timeout=120, stop=["```"])
 
     # Define input schema for the structured tool
     class JobPostInput(BaseModel):
@@ -220,193 +288,131 @@ def create_cv_matching_agent(cv_content: str):
 
         return text_str
 
-    def process_job_post_input(job_post: Any) -> str:
+    def score_job_match(job_post: str) -> dict:
         """
-        Process and normalize job post input from various formats.
+        Calculate a match score between a CV and job posting with detailed analysis.
 
         Args:
-            job_post: The job posting in various possible formats
+            job_post: The job posting content
 
         Returns:
-            str: Normalized job post text
-        """
-        # Handle different input formats
-        if isinstance(job_post, dict) and "job_post" in job_post:
-            # Extract from structured input
-            job_post_str = str(job_post["job_post"])
-        elif isinstance(job_post, dict | list):
-            # If it's a structured input, convert to string representation
-            import json
-
-            try:
-                job_post_str = json.dumps(job_post)
-            except (TypeError, ValueError):
-                job_post_str = str(job_post)
-        elif isinstance(job_post, list | tuple):
-            # If it's a list of arguments, use only the first one as job post
-            logging.warning(
-                f"Received multiple arguments to comprehensive_cv_analysis: {job_post}"
-            )
-            job_post_str = str(job_post[0]) if job_post else ""
-        else:
-            # Regular string input
-            job_post_str = str(job_post)
-
-        return job_post_str
-
-    def validate_cv_analysis_response(parsed_response: dict) -> None:
-        """
-        Validate the structure of a CV analysis response.
-
-        Args:
-            parsed_response: The parsed response to validate
-
-        Raises:
-            LLMParsingError: If the response structure is invalid
-        """
-        # Validate the expected structure exists
-        required_fields = ["experience_match", "skills_match", "soft_skills_match"]
-        missing_fields = [
-            field for field in required_fields if field not in parsed_response
-        ]
-
-        if missing_fields:
-            raise LLMParsingError(
-                "Missing required fields in LLM response",
-                field=", ".join(missing_fields),
-            )
-
-        # Validate each field has the expected structure
-        for field in required_fields:
-            if (
-                not isinstance(parsed_response[field], dict)
-                or "score" not in parsed_response[field]
-            ):
-                raise LLMParsingError(
-                    "Invalid structure for field",
-                    field=field,
-                )
-
-    def comprehensive_cv_analysis(job_post: Any) -> dict[str, dict[str, float]]:
-        """
-        Analyze all aspects of CV match in a single request with improved response formatting.
-
-        Args:
-            job_post: The job posting to match against. Can be a string or a structured input.
-
-        Returns:
-            dict: A structured dictionary with match scores and reasoning
-
-        Raises:
-            LLMParsingError: If the response cannot be parsed into the expected format
-            LLMError: If other LLM-related errors occur
-            ValueError: If input validation fails
+            dict: Match score and detailed analysis
         """
         try:
-            # Process and normalize job post input
-            job_post_str = process_job_post_input(job_post)
+            job_post_validated = validate_input_text(job_post, "Job posting")
+            cv_validated = cv_content  # Already validated in parent function
 
-            # Validate the job post
-            job_post_str = validate_input_text(job_post_str, "Job post")
+            # Prompt template encouraging detailed analysis
+            prompt = f"""You are a technical recruiter evaluating if a candidate is suitable for a job position.
 
-            # Log the processed job post
-            logging.debug(f"Processing job post: {job_post_str[:200]}...")
+            Analyze the match between the CV and job posting in these areas:
+            1. Technical Skills Match (programming languages, frameworks, tools)
+            2. Experience Level Match (years of experience, seniority)
+            3. Domain Knowledge Match (industry experience, specialized knowledge)
+            4. Education & Certification Match
+            5. Soft Skills & Cultural Fit
 
-            response = llm.invoke(
-                f"""Evaluate CV against job requirements. Provide scores (0-100) for:
+            For each area, provide a score out of 100 and brief justification.
+            Then calculate a weighted final score using:
+            - Technical Skills: 35%
+            - Experience Level: 30%
+            - Domain Knowledge: 20%
+            - Education & Certification: 10%
+            - Soft Skills: 5%
 
-                1. EXPERIENCE MATCH (40% weight):
-                   - Years of Experience (50%)
-                   - Domain Knowledge (30%)
-                   - Project Scale (20%)
+            CV:
+            {cv_validated}
 
-                2. SKILLS MATCH (45% weight):
-                   - Technical Skills (40%)
-                   - Education (25%)
-                   - Tools/Technologies (20%)
-                   - Certifications (15%)
+            Job Post:
+            {job_post_validated}
 
-                3. SOFT SKILLS MATCH (15% weight):
-                   - Communication (30%)
-                   - Team Collaboration (30%)
-                   - Problem-Solving (20%)
-                   - Cultural Fit (20%)
+            Provide your analysis as JSON with these fields:
+            {{
+                "technical_skills": {{
+                    "score": <0-100>,
+                    "justification": "<brief explanation>"
+                }},
+                "experience": {{
+                    "score": <0-100>,
+                    "justification": "<brief explanation>"
+                }},
+                "domain_knowledge": {{
+                    "score": <0-100>,
+                    "justification": "<brief explanation>"
+                }},
+                "education": {{
+                    "score": <0-100>,
+                    "justification": "<brief explanation>"
+                }},
+                "soft_skills": {{
+                    "score": <0-100>,
+                    "justification": "<brief explanation>"
+                }},
+                "final_score": <0-100>,
+                "overall_assessment": "<brief overall assessment>"
+            }}
+            """
 
-                Score Guidelines:
-                95-100: Exceeds all requirements
-                85-94: Meets all requirements
-                75-84: Meets most requirements
-                65-74: Meets basic requirements
-                50-64: Meets some requirements
-                0-49: Missing critical requirements
-
-                RESPONSE FORMAT: JSON only with this structure:
-                {{
-                    "experience_match": {{
-                        "score": 85,
-                        "reasoning": "Detailed reasoning..."
-                    }},
-                    "skills_match": {{
-                        "score": 90,
-                        "reasoning": "Detailed reasoning..."
-                    }},
-                    "soft_skills_match": {{
-                        "score": 88,
-                        "reasoning": "Detailed reasoning..."
-                    }}
-                }}
-
-                CV: {cv_content}
-
-                Job Post: {job_post_str}"""
-            )
-
-            # Log the raw response for debugging
-            logging.debug(f"Raw LLM response: {response.content[:500]}...")
-
-            # Parse the response
+            response = llm.invoke(prompt)
             try:
-                parsed_response = parse_llm_response(response.content)
+                # Extract the response to avoid text wrapper types
+                response_text = (
+                    response.content
+                    if hasattr(response, "content")
+                    and isinstance(response.content, str)
+                    else str(response)
+                )
+
+                result = parse_llm_response(response_text)
+
+                # Calculate final score if not already included
+                if "final_score" not in result:
+                    weights = {
+                        "technical_skills": 0.35,
+                        "experience": 0.30,
+                        "domain_knowledge": 0.20,
+                        "education": 0.10,
+                        "soft_skills": 0.05,
+                    }
+                    final_score = sum(
+                        result.get(key, {}).get("score", 0) * weight
+                        for key, weight in weights.items()
+                    )
+                    result["final_score"] = int(final_score)
+
+                # Format the result for better readability
+                logging.info(f"CV Match Score: {result.get('final_score', 0)}")
+                return result
+
             except LLMParsingError as error:
-                # Add more context to the error
-                raise LLMParsingError(
-                    f"Failed to parse CV analysis response: {error.message}",
-                    response=str(error.response) if error.response else None,
-                ) from error
+                # Handle parsing errors with a fallback scoring
+                logging.error(f"Error parsing response: {error}")
+                error_response = {"final_score": 0, "error": str(error)}
+                if hasattr(error, "response") and error.response:
+                    error_response["raw_response"] = error.response[:500]
+                return error_response
 
-            # Validate the response structure
-            validate_cv_analysis_response(parsed_response)
-
-            return parsed_response
-
-        except LLMParsingError:
-            # Re-raise parsing errors without wrapping
-            raise
-        except ValueError as error:
-            # Re-raise validation errors
-            logging.error(f"Input validation error: {error}")
-            raise
         except Exception as error:
-            error_msg = f"Comprehensive CV analysis failed: {error!s}"
-            logging.error(error_msg)
-            raise LLMError(error_msg) from error
+            logging.error(f"Error in score_job_match: {error}")
+            return {"final_score": 0, "error": str(error)}
 
-    # Create a structured tool that can handle complex inputs
-    cv_analysis_tool = StructuredTool.from_function(
-        func=comprehensive_cv_analysis,
-        name="comprehensive_cv_analysis",
-        description="Analyzes all aspects of CV match against job post in a single request",
+    # Create a structured tool that performs the matching
+    match_tool = StructuredTool.from_function(
+        func=score_job_match,
+        name="score_job_match",
+        description="Calculate a match score between a CV and job posting with detailed analysis",
         args_schema=JobPostInput,
-        return_direct=False,
     )
 
-    return initialize_agent(
-        [cv_analysis_tool],
+    # Initialize the agent with the tool
+    agent = initialize_agent(
+        [match_tool],
         llm,
-        agent=AgentType.CHAT_CONVERSATIONAL_REACT_DESCRIPTION,
-        verbose=True,
-        handle_parsing_errors=True,  # Add error handling for parsing issues
+        agent=AgentType.STRUCTURED_CHAT_ZERO_SHOT_REACT_DESCRIPTION,
+        verbose=False,
     )
+
+    return agent
 
 
 def validate_cv_analysis_response(parsed_response: dict) -> None:
@@ -467,7 +473,7 @@ def enhanced_cv_matching(cv_content: str, job_post: str) -> float | None:
             result = agent.invoke(
                 {
                     "input": f"""Analyze job post compatibility with CV.
-                    Use comprehensive_cv_analysis tool with ONLY the job post as input.
+                    Use score_job_match tool with ONLY the job post as input.
                     After getting scores, calculate:
                     final_score = (experience_score * 0.40) + (skills_score * 0.45) + (soft_skills_score * 0.15)
                     Return ONLY a JSON object with the final_score field.
@@ -487,13 +493,13 @@ def enhanced_cv_matching(cv_content: str, job_post: str) -> float | None:
 
         output_data = result["output"]
 
-        # Extract scores from the comprehensive_cv_analysis observation
+        # Extract scores from the score_job_match observation
         try:
             # If we have a direct observation with scores
-            if isinstance(output_data, dict) and "experience_match" in output_data:
-                experience_score = float(output_data["experience_match"]["score"])
-                skills_score = float(output_data["skills_match"]["score"])
-                soft_skills_score = float(output_data["soft_skills_match"]["score"])
+            if isinstance(output_data, dict) and "experience_score" in output_data:
+                experience_score = float(output_data["experience_score"])
+                skills_score = float(output_data["skills_score"])
+                soft_skills_score = float(output_data["soft_skills_score"])
 
                 final_score = round(
                     (experience_score * 0.40)
@@ -509,13 +515,9 @@ def enhanced_cv_matching(cv_content: str, job_post: str) -> float | None:
                 )
                 try:
                     observation_data = parse_llm_response(observation_text)
-                    experience_score = float(
-                        observation_data["experience_match"]["score"]
-                    )
-                    skills_score = float(observation_data["skills_match"]["score"])
-                    soft_skills_score = float(
-                        observation_data["soft_skills_match"]["score"]
-                    )
+                    experience_score = float(observation_data["experience_score"])
+                    skills_score = float(observation_data["skills_score"])
+                    soft_skills_score = float(observation_data["soft_skills_score"])
 
                     final_score = round(
                         (experience_score * 0.40)

@@ -1,11 +1,13 @@
 """
 LLM integration utilities for structured data extraction and analysis.
 
-This module provides functions for interacting with Anthropic's Claude API:
+This module provides functions for interacting with LLM models:
 - Job post detection and validation
 - CV-to-job matching with detailed scoring
 - Structured information extraction with retry logic
 - Error handling and input validation
+
+Supports custom local model server based on configuration.
 """
 
 import json
@@ -13,21 +15,19 @@ import logging
 import time
 from typing import Any, TypeVar
 
-import instructor
 from pydantic import BaseModel
 
-from _production import LLM_BASE_MODEL
-from _production.config.config import ANTHROPIC_CLIENT
+from _production.utils.custom_model import get_custom_model_client
 from _production.utils.exceptions import (
     LLMError,
     LLMInputError,
     LLMRateLimitError,
     LLMResponseError,
 )
+from _production.utils.instructor_wrapper import from_custom_model
 from _production.utils.prompts import (
     CLEAN_JOB_POST_PROMPT,
     CV_MATCHING_PROMPT,
-    JOB_POST_DETECTION_PROMPT,
     JOB_POST_PARSING_PROMPT,
     SINGLE_JOB_POST_DETECTION_PROMPT,
 )
@@ -36,8 +36,10 @@ T = TypeVar("T", bound=BaseModel)
 
 MAX_TEXT_LENGTH = 64000
 
-# Initialize instructor-wrapped client
-ANTHROPIC_CLIENT_STRUCTURED = instructor.from_anthropic(ANTHROPIC_CLIENT)
+# Initialize LLM clients
+logging.info("Using custom model client for LLM operations")
+CUSTOM_MODEL_CLIENT = get_custom_model_client()
+LLM_STRUCTURED_CLIENT = from_custom_model()
 
 
 class CleanJobPost(BaseModel):
@@ -86,7 +88,9 @@ def _make_llm_call(
     max_retries: int = 3,
     sleep_time: int = 10,
 ) -> T | None:
-    """Make Anthropic API calls with retry logic."""
+    """Make LLM API calls with retry logic."""
+    start_time = time.time()
+
     system_message = next(
         (msg["content"] for msg in messages if msg["role"] == "system"), ""
     )
@@ -94,10 +98,17 @@ def _make_llm_call(
         (msg["content"] for msg in messages if msg["role"] == "user"), ""
     )
 
+    call_type = str(response_format.__name__)  # Get name of the model for logging
+
     for attempt in range(max_retries):
         try:
-            response = ANTHROPIC_CLIENT_STRUCTURED.messages.create(
-                model=LLM_BASE_MODEL,
+            logging.info(
+                f"Starting LLM call for {call_type} (attempt {attempt + 1}/{max_retries})"
+            )
+            attempt_start = time.time()
+
+            response = LLM_STRUCTURED_CLIENT.messages.create(
+                model="",  # Model name is ignored by our custom client
                 system=system_message,
                 messages=[{"role": "user", "content": user_message}],
                 max_tokens=1024,
@@ -105,22 +116,45 @@ def _make_llm_call(
                 response_model=response_format,
             )
 
+            attempt_duration = time.time() - attempt_start
+            logging.info(
+                f"LLM call for {call_type} completed in {attempt_duration:.2f}s (attempt {attempt + 1})"
+            )
+
             if attempt > 0:  # Only log if we had to retry
                 logging.info(f"Successful LLM call after {attempt + 1} attempts")
+
+            total_duration = time.time() - start_time
+            logging.info(
+                f"Total processing time for {call_type}: {total_duration:.2f}s"
+            )
+
             return response
 
         except Exception as error:
+            attempt_duration = time.time() - attempt_start
+            logging.warning(
+                f"LLM call attempt {attempt + 1} failed after {attempt_duration:.2f}s"
+            )
+
             if "rate_limit" in str(error).lower():
                 logging.warning(
                     f"Rate limit hit. Retrying in {sleep_time} seconds... (Attempt {attempt + 1}/{max_retries})"
                 )
                 time.sleep(sleep_time)
                 if attempt == max_retries - 1:
+                    total_duration = time.time() - start_time
+                    logging.error(
+                        f"Rate limit error for {call_type} after {total_duration:.2f}s total processing time"
+                    )
                     raise LLMRateLimitError(
                         "Rate limit exceeded after max retries"
                     ) from error
             else:
-                logging.error(f"LLM call failed: {error!s}")
+                total_duration = time.time() - start_time
+                logging.error(
+                    f"LLM call for {call_type} failed after {total_duration:.2f}s total processing time: {error!s}"
+                )
                 raise LLMError(f"LLM call failed: {error!s}") from error
 
     return None
@@ -128,27 +162,44 @@ def _make_llm_call(
 
 def job_post_detection(post, max_retries=3, sleep_time=10):
     """Determines if the text contains any job postings."""
+    start_time = time.time()
 
     class JobPost(BaseModel):
         is_job_description: bool
 
+    # Use a more concise version of the prompt for faster processing
+    concise_prompt = """You are an expert job post classifier. Determine if the provided text contains a job posting or employment opportunity.
+    Return 'true' only if the text directly advertises a job opening. Return 'false' for all other content.
+
+    Think step-by-step:
+    1. Does this look like a job listing or recruitment post?
+    2. Does it mention position details, required skills, or application process?
+    3. Is it clearly advertising employment opportunities?
+
+    Your output should be a JSON value with this schema: {"is_job_description": boolean}"""
+
     messages = [
         {
             "role": "system",
-            "content": JOB_POST_DETECTION_PROMPT,
+            "content": concise_prompt,
         },
         {
             "role": "user",
-            "content": f"Does this text contain any job postings?\n\n{post}",
+            "content": f"Text to classify:\n\n{post}",
         },
     ]
 
     result = _make_llm_call(messages, JobPost, max_retries, sleep_time)
+
+    processing_time = time.time() - start_time
+    logging.info(f"Job post detection completed in {processing_time:.2f}s")
+
     return result.is_job_description if result else None
 
 
 def single_job_post_detection(post, max_retries=3, sleep_time=10):
     """Determines if the text contains exactly one job posting."""
+    start_time = time.time()
 
     class SingleJobPost(BaseModel):
         is_single_post: bool
@@ -165,6 +216,10 @@ def single_job_post_detection(post, max_retries=3, sleep_time=10):
     ]
 
     result = _make_llm_call(messages, SingleJobPost, max_retries, sleep_time)
+
+    processing_time = time.time() - start_time
+    logging.info(f"Single job post detection completed in {processing_time:.2f}s")
+
     return result.is_single_post if result else None
 
 
@@ -172,6 +227,8 @@ def match_cv_with_job(
     cv_text: str, post: str, max_retries: int = 3, sleep_time: int = 10
 ) -> float | None:
     """Evaluates match between CV and job post using a comprehensive single-call approach."""
+    start_time = time.time()
+
     try:
         validate_text_input(cv_text, "CV text")
         validate_text_input(post, "Job post")
@@ -234,19 +291,39 @@ def match_cv_with_job(
                 )
                 return calculated_score
 
+            processing_time = time.time() - start_time
+            logging.info(
+                f"CV matching completed in {processing_time:.2f}s with score: {result.final_score}"
+            )
+
             return result.final_score
+
+        processing_time = time.time() - start_time
+        logging.info(f"CV matching completed in {processing_time:.2f}s with no result")
         return None
+
     except LLMInputError as error:
-        logging.error(f"Input validation failed: {error!s}")
+        processing_time = time.time() - start_time
+        logging.error(f"Input validation failed in {processing_time:.2f}s: {error!s}")
         return None
     except (LLMError, LLMResponseError, LLMRateLimitError) as error:
-        logging.error(f"LLM service error during CV matching: {error!s}")
+        processing_time = time.time() - start_time
+        logging.error(
+            f"LLM service error during CV matching in {processing_time:.2f}s: {error!s}"
+        )
         return None
     except (ValueError, TypeError, KeyError) as error:
-        logging.error(f"Data processing error during CV matching: {error!s}")
+        processing_time = time.time() - start_time
+        logging.error(
+            f"Data processing error during CV matching in {processing_time:.2f}s: {error!s}"
+        )
         return None
     except Exception as error:
-        logging.error(f"Unexpected error during CV matching: {error!s}", exc_info=True)
+        processing_time = time.time() - start_time
+        logging.error(
+            f"Unexpected error during CV matching in {processing_time:.2f}s: {error!s}",
+            exc_info=True,
+        )
         return None
 
 
@@ -254,6 +331,8 @@ def job_post_parsing(
     post: str, max_retries: int = 3, sleep_time: int = 10
 ) -> dict[str, Any] | None:
     """Parse job posting into structured format."""
+    start_time = time.time()
+
     try:
         validate_text_input(post, "Job post")
 
@@ -281,13 +360,20 @@ def job_post_parsing(
 
         result = _make_llm_call(messages, JobPostStructure, max_retries, sleep_time)
         if not result:
+            processing_time = time.time() - start_time
+            logging.info(
+                f"Job post parsing completed in {processing_time:.2f}s with no result"
+            )
             return None
 
         # Get initial parsed response
         response = result.model_dump()
 
         # Get cleaned response
+        cleaning_start = time.time()
         cleaned_response = clean_job_post_values(response)
+        cleaning_time = time.time() - cleaning_start
+        logging.info(f"Job post cleaning completed in {cleaning_time:.2f}s")
 
         cleaned_response_filtered = {
             key: value
@@ -298,12 +384,29 @@ def job_post_parsing(
             not cleaned_response_filtered
             or "job_title" not in cleaned_response_filtered
         ):
+            processing_time = time.time() - start_time
+            logging.info(
+                f"Job post parsing completed in {processing_time:.2f}s but produced invalid result"
+            )
             return None
 
         # Single strip operation only on string values
+        processing_time = time.time() - start_time
+        logging.info(
+            f"Job post parsing completed in {processing_time:.2f}s for job: {cleaned_response_filtered.get('job_title', 'Unknown')}"
+        )
+
         return cleaned_response_filtered
+
     except LLMInputError as error:
-        logging.error(f"Input validation failed: {error!s}")
+        processing_time = time.time() - start_time
+        logging.error(
+            f"Input validation failed during job parsing in {processing_time:.2f}s: {error!s}"
+        )
+        return None
+    except Exception as error:
+        processing_time = time.time() - start_time
+        logging.error(f"Job post parsing failed in {processing_time:.2f}s: {error!s}")
         return None
 
 
@@ -319,6 +422,8 @@ def clean_job_post_values(response: dict[str, Any]) -> dict[str, Any]:
     Raises:
         LLMResponseError: If cleaning fails
     """
+    start_time = time.time()
+
     messages = [
         {
             "role": "system",
@@ -335,10 +440,21 @@ def clean_job_post_values(response: dict[str, Any]) -> dict[str, Any]:
             messages=messages, response_format=CleanJobPost, max_retries=3, sleep_time=1
         )
         if not result:
+            processing_time = time.time() - start_time
+            logging.error(
+                f"Failed to get valid response from LLM in {processing_time:.2f}s"
+            )
             raise LLMResponseError("Failed to get valid response from LLM")
+
+        processing_time = time.time() - start_time
+        logging.info(f"Job post cleaning completed in {processing_time:.2f}s")
         return result.model_dump()
+
     except Exception as error:
-        logging.error(f"Failed to clean job post values: {error!s}")
+        processing_time = time.time() - start_time
+        logging.error(
+            f"Failed to clean job post values in {processing_time:.2f}s: {error!s}"
+        )
         return CleanJobPost(
             job_title=None,
             seniority_level=None,
@@ -348,6 +464,29 @@ def clean_job_post_values(response: dict[str, Any]) -> dict[str, Any]:
             description=None,
             skills=None,
         ).model_dump()
+
+
+# For direct text generation without structured output
+def generate_text(prompt: str, max_tokens: int = 1024, temperature: float = 0.0) -> str:
+    """Generate text using the LLM.
+
+    Args:
+        prompt: Text prompt
+        max_tokens: Maximum tokens to generate
+        temperature: Temperature parameter
+
+    Returns:
+        Generated text
+    """
+    try:
+        return CUSTOM_MODEL_CLIENT.generate(
+            prompt=prompt,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+    except Exception as error:
+        logging.error(f"Text generation failed: {error}")
+        return ""
 
 
 if __name__ == "__main__":

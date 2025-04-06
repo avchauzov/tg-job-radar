@@ -177,15 +177,14 @@ def process_batch(
     total_batches: int,
     stats: CleaningStats,
 ) -> pd.DataFrame | None:
-    """
-    Process a batch of posts against CV content for job matching.
+    """Process a batch of Telegram posts.
 
     Args:
-        batch_df: DataFrame containing posts to be processed
-        cv_content: String content of the CV to match against
-        batch_num: Current batch number (1-based)
-        total_batches: Total number of batches to process
-        stats: Statistics object for tracking metrics
+        batch_df: DataFrame containing posts to process
+        cv_content: Content of the CV document
+        batch_num: Current batch number
+        total_batches: Total number of batches
+        stats: Statistics object
 
     Returns:
         DataFrame with processed job posts or None if processing fails
@@ -211,9 +210,43 @@ def process_batch(
         logging.info("-" * 40)
         logging.info("STEP 1: Job Post Detection")
         logging.info("-" * 40)
-        job_post_mask = batch_df["post"].apply(job_post_detection)
-        batch_df.loc[job_post_mask, "is_job_post"] = True
-        batch_df.loc[~job_post_mask, "is_job_post"] = False
+
+        # Process in smaller chunks to prevent timeouts
+        CHUNK_SIZE = (
+            1  # Process one post at a time to avoid overloading the model server
+        )
+
+        # Function to safely process a single post
+        def safe_job_post_detection(post):
+            try:
+                result = job_post_detection(post)
+                # Add a small delay after each LLM call to prevent overloading
+                time.sleep(1.5)
+                return result
+            except Exception as e:
+                logging.warning(f"Error in job post detection: {e}")
+                return None
+
+        # Process in chunks
+        for i in range(0, len(batch_df), CHUNK_SIZE):
+            chunk_end = min(i + CHUNK_SIZE, len(batch_df))
+            logging.info(
+                f"Processing chunk {i//CHUNK_SIZE + 1}/{(len(batch_df) + CHUNK_SIZE - 1)//CHUNK_SIZE}"
+            )
+
+            # Apply detection to chunk
+            batch_df.loc[i : chunk_end - 1, "is_job_post"] = batch_df.loc[
+                i : chunk_end - 1, "post"
+            ].apply(safe_job_post_detection)
+
+            # Log progress after each chunk
+            completed = chunk_end
+            percent_done = completed / len(batch_df) * 100
+            logging.info(
+                f"Completed {completed}/{len(batch_df)} posts ({percent_done:.1f}%)"
+            )
+
+        job_post_mask = batch_df["is_job_post"].fillna(False)
         job_posts_count = job_post_mask.sum()
         stats.job_posts += job_posts_count
 
@@ -233,17 +266,52 @@ def process_batch(
             f"    • None: {none_count} ({none_count/initial_count*100:.1f}%)"
         )
 
-        # Single job post detection
+        # Add a delay between steps
+        logging.info("Pausing for 3 seconds between processing steps")
+        time.sleep(3)
+
+        # Single job post detection - only for posts identified as job posts
         logging.info("\n" + "-" * 40)
         logging.info("STEP 2: Single Job Post Detection")
         logging.info("-" * 40)
-        single_post_mask = batch_df["is_job_post"] & (
-            batch_df[batch_df["is_job_post"]]["post"].apply(single_job_post_detection)
-        )
-        batch_df.loc[single_post_mask, "is_single_job_post"] = True
-        batch_df.loc[
-            batch_df["is_job_post"] & ~single_post_mask, "is_single_job_post"
-        ] = False
+
+        # Safe version of single job post detection
+        def safe_single_job_detection(post):
+            try:
+                result = single_job_post_detection(post)
+                # Add a small delay after each LLM call
+                time.sleep(1.5)
+                return result
+            except Exception as e:
+                logging.warning(f"Error in single job post detection: {e}")
+                return None
+
+        # Only process posts that were identified as job posts
+        job_posts_df = batch_df[job_post_mask]
+
+        if len(job_posts_df) > 0:
+            # Process in chunks
+            for i in range(0, len(job_posts_df), CHUNK_SIZE):
+                chunk_end = min(i + CHUNK_SIZE, len(job_posts_df))
+                chunk_indices = job_posts_df.index[i:chunk_end]
+
+                logging.info(
+                    f"Processing single post detection chunk {i//CHUNK_SIZE + 1}/{(len(job_posts_df) + CHUNK_SIZE - 1)//CHUNK_SIZE}"
+                )
+
+                # Apply detection to chunk
+                batch_df.loc[chunk_indices, "is_single_job_post"] = job_posts_df.loc[
+                    chunk_indices, "post"
+                ].apply(safe_single_job_detection)
+
+                # Log progress
+                completed = chunk_end
+                percent_done = completed / len(job_posts_df) * 100
+                logging.info(
+                    f"Completed {completed}/{len(job_posts_df)} job posts ({percent_done:.1f}%)"
+                )
+
+        single_post_mask = batch_df["is_single_job_post"].fillna(False)
         single_posts_count = single_post_mask.sum()
         stats.single_job_posts += single_posts_count
 
@@ -256,12 +324,16 @@ def process_batch(
             f"📊 Results:\n"
             f"  - Job posts analyzed: {job_posts_count}\n"
             f"  - Single posts found: {single_posts_count}\n"
-            f"  - Success rate: {(single_posts_count/job_posts_count)*100:.1f}% of job posts\n"
+            f"  - Success rate: {(single_posts_count/max(job_posts_count, 1))*100:.1f}% of job posts\n"
             f"  - State distribution:\n"
             f"    • True: {true_count} ({true_count/initial_count*100:.1f}%)\n"
             f"    • False: {false_count} ({false_count/initial_count*100:.1f}%)\n"
             f"    • None: {none_count} ({none_count/initial_count*100:.1f}%)"
         )
+
+        # Add a delay between steps
+        logging.info("Pausing for 3 seconds between processing steps")
+        time.sleep(3)
 
         # First pass scoring
         logging.info("\n" + "-" * 40)
@@ -275,15 +347,40 @@ def process_batch(
         def safe_match_score(post: str) -> float | None:
             try:
                 score = match_cv_with_job(cv_content, post)
+                # Add a larger delay after CV matching (more intensive)
+                time.sleep(3)
                 return float(score) if score is not None else None
             except Exception as error:
                 logging.warning(f"⚠️ Error in match_cv_with_job: {error}")
                 return None
 
-        # Apply scoring only to posts where is_single_job_post is True
-        batch_df.loc[score_mask_simple, "score"] = batch_df.loc[
-            score_mask_simple, "post"
-        ].apply(safe_match_score)
+        if posts_to_score > 0:
+            # Process in chunks for scoring
+            posts_to_score_df = batch_df[score_mask_simple]
+
+            for i in range(0, len(posts_to_score_df), CHUNK_SIZE):
+                chunk_end = min(i + CHUNK_SIZE, len(posts_to_score_df))
+                chunk_indices = posts_to_score_df.index[i:chunk_end]
+
+                logging.info(
+                    f"Processing scoring chunk {i//CHUNK_SIZE + 1}/{(len(posts_to_score_df) + CHUNK_SIZE - 1)//CHUNK_SIZE}"
+                )
+
+                # Apply scoring to chunk
+                batch_df.loc[chunk_indices, "score"] = posts_to_score_df.loc[
+                    chunk_indices, "post"
+                ].apply(safe_match_score)
+
+                # Log progress
+                completed = chunk_end
+                percent_done = completed / len(posts_to_score_df) * 100
+                logging.info(
+                    f"Completed scoring {completed}/{len(posts_to_score_df)} posts ({percent_done:.1f}%)"
+                )
+
+        # After all score calculations, convert decimal scores to percentage (0-100 scale)
+        # This makes the comparison with threshold (85) work correctly
+        batch_df["score"] = batch_df["score"] * 100
 
         # Track scores for statistics
         valid_scores = batch_df.loc[score_mask_simple, "score"].dropna()
@@ -305,11 +402,15 @@ def process_batch(
             f"📊 Results:\n"
             f"  - Posts scored: {posts_to_score}\n"
             f"  - Above threshold ({MATCH_SCORE_THRESHOLD}): {threshold_count}\n"
-            f"  - Success rate: {(threshold_count/posts_to_score)*100:.1f}% passed threshold\n"
+            f"  - Success rate: {(threshold_count/max(posts_to_score, 1))*100:.1f}% passed threshold\n"
             f"  - Score distribution:\n"
             f"    • Valid scores: {valid_scores} ({valid_scores/initial_count*100:.1f}%)\n"
             f"    • NULL scores: {null_scores} ({null_scores/initial_count*100:.1f}%)"
         )
+
+        # Add a delay between steps
+        logging.info("Pausing for 3 seconds between processing steps")
+        time.sleep(3)
 
         # Final parsing
         logging.info("\n" + "-" * 40)
@@ -339,6 +440,8 @@ def process_batch(
         def safe_job_parsing(post: str) -> str:
             try:
                 parsed_data = job_post_parsing(post)
+                # Add a larger delay after parsing (more intensive)
+                time.sleep(3)
                 if not parsed_data:
                     logging.info("⚠️ job_post_parsing returned empty result")
                     return json.dumps({"full_description": post})
@@ -372,9 +475,29 @@ def process_batch(
                 )
                 return json.dumps({"full_description": post})
 
-        batch_df.loc[parsing_mask, "post_structured"] = batch_df.loc[
-            parsing_mask, "post"
-        ].apply(safe_job_parsing)
+        if posts_to_parse > 0:
+            # Process parsing in chunks
+            posts_to_parse_df = batch_df[parsing_mask]
+
+            for i in range(0, len(posts_to_parse_df), CHUNK_SIZE):
+                chunk_end = min(i + CHUNK_SIZE, len(posts_to_parse_df))
+                chunk_indices = posts_to_parse_df.index[i:chunk_end]
+
+                logging.info(
+                    f"Processing parsing chunk {i//CHUNK_SIZE + 1}/{(len(posts_to_parse_df) + CHUNK_SIZE - 1)//CHUNK_SIZE}"
+                )
+
+                # Apply parsing to chunk
+                batch_df.loc[chunk_indices, "post_structured"] = posts_to_parse_df.loc[
+                    chunk_indices, "post"
+                ].apply(safe_job_parsing)
+
+                # Log progress
+                completed = chunk_end
+                percent_done = completed / len(posts_to_parse_df) * 100
+                logging.info(
+                    f"Completed parsing {completed}/{len(posts_to_parse_df)} posts ({percent_done:.1f}%)"
+                )
 
         # Set timestamp and prepare final results
         batch_df.loc[:, "created_at"] = pd.Timestamp(
@@ -442,15 +565,17 @@ def clean_and_move_data():
             logging.info("No data to process: DataFrame is empty")
             return
 
-        total_batches = (len(df) + DATA_BATCH_SIZE - 1) // DATA_BATCH_SIZE
+        # Use an extremely small batch size to prevent model server overload
+        MICRO_BATCH_SIZE = 2  # Very small batch size to prevent server overload
+        total_batches = (len(df) + MICRO_BATCH_SIZE - 1) // MICRO_BATCH_SIZE
         logging.info(
-            f"Starting processing of {len(df)} records in {total_batches} batches"
+            f"Starting processing of {len(df)} records in {total_batches} micro-batches (batch size: {MICRO_BATCH_SIZE})"
         )
 
         # Process batches
-        for batch_num, i in enumerate(range(0, len(df), DATA_BATCH_SIZE), 1):
+        for batch_num, i in enumerate(range(0, len(df), MICRO_BATCH_SIZE), 1):
             try:
-                batch_df = df[i : i + DATA_BATCH_SIZE].copy()
+                batch_df = df[i : i + MICRO_BATCH_SIZE].copy()
 
                 # Ensure proper column dtypes before processing
                 if "score" in batch_df.columns:
@@ -478,11 +603,26 @@ def clean_and_move_data():
                 else:
                     logging.info(f"No valid records in batch {batch_num}")
 
+                # Add a delay between batches to allow the model server to recover
+                if batch_num % 10 == 0:
+                    logging.info(
+                        f"Taking a 30-second break after batch {batch_num} to let the model server recover"
+                    )
+                    time.sleep(30)
+                else:
+                    logging.info(f"Small pause between batches ({batch_num})")
+                    time.sleep(3)
+
             except Exception as batch_error:
                 logging.error(
                     f"Batch {batch_num} processing failed: {batch_error!s}",
                     exc_info=True,
                 )
+                # Add longer pause after error
+                logging.info(
+                    f"Taking a 60-second break after error in batch {batch_num}"
+                )
+                time.sleep(60)
                 continue
 
         # Calculate execution time

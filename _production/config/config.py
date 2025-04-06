@@ -10,14 +10,13 @@ import logging
 import sys
 from functools import lru_cache
 
-import anthropic
 from influxdb_client.client.influxdb_client import InfluxDBClient
 from influxdb_client.client.write_api import SYNCHRONOUS
 from telethon.sessions import StringSession
 from telethon.sync import TelegramClient
 
 from _production import (
-    ANTHROPIC_API_KEY,
+    CUSTOM_MODEL_BASE_URL,
     DATABASE,
     INFLUXDB,
     SERVER_URL,
@@ -50,19 +49,17 @@ except Exception as error:
     INFLUXDB_CLIENT = None
     INFLUXDB_WRITE_API = None
 
-# Anthropic client initialization
-try:
-    if ANTHROPIC_API_KEY:
-        ANTHROPIC_CLIENT = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    else:
-        logging.error("Anthropic API key not set")
-        raise ValueError(
-            "Anthropic API key is not set. Please set the ANTHROPIC_API_KEY environment variable."
-        )
+# No Anthropic client initialization, only using custom model
+ANTHROPIC_CLIENT = None
+logging.info("Using custom model server for LLM operations")
 
-except Exception:
-    logging.error("Failed to initialize Anthropic client", exc_info=True)
-    raise
+# Custom model server configuration
+CUSTOM_MODEL_CONFIG = {
+    "BASE_URL": CUSTOM_MODEL_BASE_URL,  # URL for the local model server
+    "TIMEOUT": 300,  # Request timeout in seconds (increased from 120 to 300)
+    "DEFAULT_TEMPERATURE": 0.0,  # Default temperature for deterministic outputs
+    "DEFAULT_MAX_TOKENS": 1024,  # Default maximum tokens to generate
+}
 
 
 @lru_cache(maxsize=1)

@@ -38,10 +38,16 @@ TELEGRAM: dict[str, str] = {
 }
 
 CV_DOC_ID: str = os.getenv("CV_DOC_ID", "")
-LLM_BASE_MODEL = "claude-3-5-haiku-latest"
 
-# Add type hints and default values for critical configurations
-ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
+
+# Custom model is now always enabled
+import logging
+
+logging.info("Using custom model server for LLM operations")
+
+# Custom model configuration with sensible defaults
+CUSTOM_MODEL_ENABLED: bool = True
+CUSTOM_MODEL_BASE_URL: str = os.getenv("CUSTOM_MODEL_URL", "http://localhost:8000")
 
 
 # URL regex patterns with type hints
@@ -124,9 +130,6 @@ if not CV_DOC_ID:
 
 if not (0 <= MATCH_SCORE_THRESHOLD <= 100):
     raise ValueError("MATCH_SCORE_THRESHOLD must be between 0 and 100")
-
-if not ANTHROPIC_API_KEY:
-    raise ValueError("ANTHROPIC_API_KEY environment variable is required")
 
 # Validate Telegram API_ID is numeric
 try:
