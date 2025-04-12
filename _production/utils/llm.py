@@ -15,8 +15,10 @@ import logging
 import time
 from typing import Any, TypeVar
 
+import requests
 from pydantic import BaseModel
 
+from _production import LLM_INSTANCE_URL
 from _production.utils.custom_model import get_custom_model_client
 from _production.utils.exceptions import (
     LLMError,
@@ -85,8 +87,10 @@ def validate_text_input(
 def _make_llm_call(
     messages: list[dict[str, str]],
     response_format: type[T],
-    max_retries: int = 3,
+    max_retries: int = 5,
     sleep_time: int = 10,
+    max_tokens: int = 1024,
+    temperature: float = 0.0,
 ) -> T | None:
     """Make LLM API calls with retry logic."""
     start_time = time.time()
@@ -100,20 +104,109 @@ def _make_llm_call(
 
     call_type = str(response_format.__name__)  # Get name of the model for logging
 
+    # Calculate total input size in tokens using SentencePiece
+    try:
+        import sentencepiece as spm
+
+        # Initialize SentencePiece processor
+        sp = spm.SentencePieceProcessor()
+        # Load the model's tokenizer (assuming it's in the same directory)
+        sp.load(
+            "/home/tg-job-radar/_production/utils/tokenizer.model"
+        )  # Adjust path as needed
+
+        # Encode messages
+        system_tokens = sp.encode_as_ids(system_message)
+        user_tokens = sp.encode_as_ids(user_message)
+        total_input_tokens = len(system_tokens) + len(user_tokens)
+
+        logging.info(f"Using SentencePiece tokenizer for {call_type}")
+        logging.info(f"Total input size: {total_input_tokens} tokens")
+        logging.info(
+            f"System tokens: {len(system_tokens)}, User tokens: {len(user_tokens)}"
+        )
+
+    except Exception as e:
+        logging.warning(
+            f"Failed to use SentencePiece: {e}, falling back to character count"
+        )
+        # Fallback: rough estimate of 4 chars per token
+        total_input_tokens = (len(system_message) + len(user_message)) // 4
+        logging.info(
+            f"Using character-based token estimation: {total_input_tokens} tokens"
+        )
+
+    # Adjust timeout based on input tokens and model type
+    base_timeout = 60  # Increased base timeout to 60s
+    size_based_timeout = min(
+        300,  # Increased max timeout to 300s
+        base_timeout + (total_input_tokens / 10),  # 1s per 10 tokens
+    )
+    logging.info(f"Using timeout of {size_based_timeout:.1f}s for {call_type}")
+
+    # Check server health before making request
+    def check_server_health():
+        try:
+            status_response = requests.get(f"{LLM_INSTANCE_URL}/status", timeout=5)
+            if status_response.status_code == 200:
+                status_data = status_response.json()
+                if status_data.get("status") == "loaded":
+                    cache_size = status_data.get("cache_size", 0)
+                    logging.info(
+                        f"Server is healthy (status: loaded, cache_size: {cache_size})"
+                    )
+                    # If cache is empty, wait a bit to let it warm up
+                    if cache_size == 0 and attempt == 0:
+                        logging.info("Cache is empty, waiting 5s for warm-up...")
+                        time.sleep(5)
+                    return True
+                else:
+                    logging.warning(
+                        f"Server not ready (status: {status_data.get('status', 'unknown')}, "
+                        f"cache_size: {status_data.get('cache_size', 0)})"
+                    )
+                    return False
+            logging.warning(
+                f"Server status check failed with status {status_response.status_code}"
+            )
+            return False
+        except Exception as e:
+            logging.warning(f"Server status check failed: {e}")
+            return False
+
     for attempt in range(max_retries):
         try:
+            # Check server health before each attempt
+            if not check_server_health():
+                if attempt < max_retries - 1:
+                    backoff_time = sleep_time * (2**attempt)
+                    logging.warning(
+                        f"Server not ready, waiting {backoff_time}s before retry..."
+                    )
+                    time.sleep(backoff_time)
+                    continue
+                else:
+                    raise LLMError("Server not ready after max retries")
+
             logging.info(
                 f"Starting LLM call for {call_type} (attempt {attempt + 1}/{max_retries})"
             )
             attempt_start = time.time()
 
+            # Add exponential backoff between retries
+            if attempt > 0:
+                backoff_time = sleep_time * (2 ** (attempt - 1))
+                logging.info(f"Waiting {backoff_time}s before retry...")
+                time.sleep(backoff_time)
+
             response = LLM_STRUCTURED_CLIENT.messages.create(
                 model="",  # Model name is ignored by our custom client
                 system=system_message,
                 messages=[{"role": "user", "content": user_message}],
-                max_tokens=1024,
-                temperature=0.0,
+                max_tokens=max_tokens,
+                temperature=temperature,
                 response_model=response_format,
+                timeout=size_based_timeout,  # Use size-based timeout
             )
 
             attempt_duration = time.time() - attempt_start
@@ -130,6 +223,39 @@ def _make_llm_call(
             )
 
             return response
+
+        except requests.exceptions.Timeout:
+            attempt_duration = time.time() - attempt_start
+            logging.warning(
+                f"LLM call attempt {attempt + 1} timed out after {attempt_duration:.2f}s"
+            )
+            if attempt == max_retries - 1:
+                total_duration = time.time() - start_time
+                logging.error(
+                    f"LLM call for {call_type} timed out after {total_duration:.2f}s total processing time"
+                )
+                raise LLMError("Request to model server timed out")
+            continue
+
+        except requests.exceptions.HTTPError as error:
+            if error.response.status_code == 500:
+                attempt_duration = time.time() - attempt_start
+                logging.warning(
+                    f"Server error (500) on attempt {attempt + 1} after {attempt_duration:.2f}s"
+                )
+                if attempt == max_retries - 1:
+                    total_duration = time.time() - start_time
+                    logging.error(
+                        f"LLM call for {call_type} failed after {total_duration:.2f}s total processing time: {error!s}"
+                    )
+                    raise LLMError(f"Failed to connect to model server: {error!s}")
+                continue
+            else:
+                total_duration = time.time() - start_time
+                logging.error(
+                    f"LLM call for {call_type} failed after {total_duration:.2f}s total processing time: {error!s}"
+                )
+                raise LLMError(f"Failed to connect to model server: {error!s}")
 
         except Exception as error:
             attempt_duration = time.time() - attempt_start
@@ -224,7 +350,7 @@ def single_job_post_detection(post, max_retries=3, sleep_time=10):
 
 
 def match_cv_with_job(
-    cv_text: str, post: str, max_retries: int = 3, sleep_time: int = 10
+    cv_text: str, post: str, max_retries: int = 5, sleep_time: int = 10
 ) -> float | None:
     """Evaluates match between CV and job post using a comprehensive single-call approach."""
     start_time = time.time()
@@ -232,6 +358,11 @@ def match_cv_with_job(
     try:
         validate_text_input(cv_text, "CV text")
         validate_text_input(post, "Job post")
+
+        # Truncate inputs if they're too long
+        max_input_length = 32000  # Half of MAX_TEXT_LENGTH to leave room for prompt
+        cv_text = cv_text[:max_input_length]
+        post = post[:max_input_length]
 
         # Define a more structured response model that captures all three areas
         class CVMatchDetailed(BaseModel):
@@ -247,18 +378,7 @@ def match_cv_with_job(
             },
             {
                 "role": "user",
-                "content": f"""Analyze this CV and job post for compatibility.
-
-                First, evaluate these three key areas separately:
-                1. Experience Match (years of experience, domain knowledge, project scale)
-                2. Skills Match (technical skills, education, tools, certifications)
-                3. Soft Skills Match (communication, teamwork, problem-solving, cultural fit)
-
-                Then calculate the final weighted score using:
-                - Skills Match (45%)
-                - Experience Match (40%)
-                - Soft Skills Match (15%)
-
+                "content": f"""
                 CV:
                 {cv_text}
 
@@ -271,14 +391,38 @@ def match_cv_with_job(
                     "skills_score": <your calculated score>,
                     "soft_skills_score": <your calculated score>,
                     "final_score": <your calculated weighted score>
-                }}""",
+                }}
+
+                IMPORTANT:
+                - Each score should be between 0 and 100
+                - Calculate scores based on actual content analysis
+                - Do not return fixed or default values
+                - Provide different scores for different job posts
+                """,
             },
         ]
 
-        result = _make_llm_call(messages, CVMatchDetailed, max_retries, sleep_time)
+        # Set explicit token limits
+        result = _make_llm_call(
+            messages,
+            CVMatchDetailed,
+            max_retries,
+            sleep_time,
+            max_tokens=1024,  # Limit response tokens
+            temperature=0.0,  # Ensure deterministic output
+        )
         if result:
+            # Log individual scores for debugging
+            logging.info(
+                f"CV Matching Scores:\n"
+                f"  - Experience: {result.experience_score}\n"
+                f"  - Skills: {result.skills_score}\n"
+                f"  - Soft Skills: {result.soft_skills_score}\n"
+                f"  - Final: {result.final_score}"
+            )
+
             # Verify the final score calculation is correct
-            calculated_score = int(
+            calculated_score = (
                 (result.skills_score * 0.45)
                 + (result.experience_score * 0.40)
                 + (result.soft_skills_score * 0.15)
@@ -311,6 +455,15 @@ def match_cv_with_job(
         logging.error(
             f"LLM service error during CV matching in {processing_time:.2f}s: {error!s}"
         )
+        # Retry the entire operation for connection errors
+        if max_retries > 0:
+            logging.info(
+                f"Retrying CV matching with {max_retries - 1} attempts remaining"
+            )
+            time.sleep(sleep_time)
+            return match_cv_with_job(
+                cv_text, post, max_retries=max_retries - 1, sleep_time=sleep_time * 2
+            )
         return None
     except (ValueError, TypeError, KeyError) as error:
         processing_time = time.time() - start_time

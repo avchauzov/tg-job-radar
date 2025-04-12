@@ -16,10 +16,10 @@ from telethon.sessions import StringSession
 from telethon.sync import TelegramClient
 
 from _production import (
-    CUSTOM_MODEL_BASE_URL,
+    CURRENT_SERVER_URL,
     DATABASE,
     INFLUXDB,
-    SERVER_URL,
+    LLM_INSTANCE_URL,
     TELEGRAM,
 )
 from _production.utils.common import get_correct_path, setup_logging
@@ -33,7 +33,7 @@ setup_logging(__file__[:-3])
 try:
     if all(INFLUXDB.values()):
         INFLUXDB_CLIENT = InfluxDBClient(
-            url=SERVER_URL + ":8086",
+            url=CURRENT_SERVER_URL + ":8086",
             token=INFLUXDB["TOKEN"],
             org=INFLUXDB["ORG"],
         )
@@ -55,7 +55,7 @@ logging.info("Using custom model server for LLM operations")
 
 # Custom model server configuration
 CUSTOM_MODEL_CONFIG = {
-    "BASE_URL": CUSTOM_MODEL_BASE_URL,  # URL for the local model server
+    "LLM_INSTANCE_URL": LLM_INSTANCE_URL,  # URL for the local model server
     "TIMEOUT": 300,  # Request timeout in seconds (increased from 120 to 300)
     "DEFAULT_TEMPERATURE": 0.0,  # Default temperature for deterministic outputs
     "DEFAULT_MAX_TOKENS": 1024,  # Default maximum tokens to generate

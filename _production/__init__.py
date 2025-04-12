@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-SERVER_URL: str = os.getenv("SERVER_URL", "")
+CURRENT_SERVER_URL: str = os.getenv("CURRENT_SERVER_URL", "")
 
 # InfluxDB configuration
 INFLUXDB: dict[str, str] = {
@@ -37,17 +37,21 @@ TELEGRAM: dict[str, str] = {
     "API_HASH": os.getenv("TG_API_HASH", ""),
 }
 
+# Instance configuration
+EC2_MANAGER: dict[str, str] = {
+    "EC2_MANAGER_URL": os.getenv("EC2_MANAGER_URL", "http://localhost:8000"),
+    "LLM_INSTANCE_ID": os.getenv("LLM_INSTANCE_ID", ""),
+    "LLM_INSTANCE_REGION": os.getenv("LLM_INSTANCE_REGION", ""),
+    "AWS_ACCESS_KEY_ID": os.getenv("AWS_ACCESS_KEY_ID", ""),
+    "AWS_SECRET_ACCESS_KEY": os.getenv("AWS_SECRET_ACCESS_KEY", ""),
+}
+
 CV_DOC_ID: str = os.getenv("CV_DOC_ID", "")
 
 
-# Custom model is now always enabled
-import logging
-
-logging.info("Using custom model server for LLM operations")
-
 # Custom model configuration with sensible defaults
 CUSTOM_MODEL_ENABLED: bool = True
-CUSTOM_MODEL_BASE_URL: str = os.getenv("CUSTOM_MODEL_URL", "http://localhost:8000")
+LLM_INSTANCE_URL: str = os.getenv("LLM_INSTANCE_URL", "")
 
 
 # URL regex patterns with type hints
@@ -91,7 +95,7 @@ MATCH_SCORE_THRESHOLD: int = 85  # Value between 0-100
 
 LOOKBACK_DAYS = 30
 
-DATA_BATCH_SIZE = 32
+DATA_BATCH_SIZE = 2
 NUMBER_OF_BATCHES = 4
 MAX_RETRY_ATTEMPTS = 3
 

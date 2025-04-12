@@ -18,12 +18,14 @@ from typing import Any
 
 import pandas as pd
 import requests
+import tiktoken
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from _production import (
     CV_DOC_ID,
     DATA_BATCH_SIZE,
     GDOCS_TIMEOUT_SECONDS,
+    LLM_INSTANCE_URL,
     MATCH_SCORE_THRESHOLD,
     MIN_CV_LENGTH,
     NUMBER_OF_BATCHES,
@@ -60,6 +62,7 @@ class CleaningStats:
     posts_without_structured_data: int = 0
     scores: list[float] = field(default_factory=list)
     execution_time_ms: float = 0.0
+    server_errors: int = 0  # Track server errors
 
     def to_dict(self) -> dict[str, Any]:
         """Convert stats to a dictionary for metrics storage."""
@@ -74,6 +77,7 @@ class CleaningStats:
                 "score_mean": 0.0,
                 "score_std": 0.0,
                 "execution_time_ms": self.execution_time_ms,
+                "server_errors": self.server_errors,
             }
 
         # Calculate rates
@@ -117,6 +121,7 @@ class CleaningStats:
             "score_mean": float(score_mean),
             "score_std": float(score_std),
             "execution_time_ms": float(self.execution_time_ms),
+            "server_errors": self.server_errors,
         }
 
 
@@ -170,6 +175,16 @@ def fetch_cv_content(doc_id: str) -> str | None:
         raise
 
 
+def count_tokens(text: str) -> int:
+    """Count the number of tokens in a text using tiktoken."""
+    try:
+        encoding = tiktoken.get_encoding("cl100k_base")  # GPT-4 encoding
+        return len(encoding.encode(text))
+    except Exception as e:
+        logging.warning(f"Error counting tokens: {e!s}")
+        return len(text) // 4  # Fallback: rough estimate of 4 chars per token
+
+
 def process_batch(
     batch_df: pd.DataFrame,
     cv_content: str,
@@ -191,6 +206,10 @@ def process_batch(
     """
     try:
         initial_count = len(batch_df)
+        if initial_count == 0:
+            logging.info(f"Batch {batch_num}/{total_batches} is empty, skipping...")
+            return None
+
         stats.total_posts += initial_count
         logging.info("=" * 80)
         logging.info(
@@ -211,44 +230,33 @@ def process_batch(
         logging.info("STEP 1: Job Post Detection")
         logging.info("-" * 40)
 
-        # Process in smaller chunks to prevent timeouts
-        CHUNK_SIZE = (
-            1  # Process one post at a time to avoid overloading the model server
-        )
-
         # Function to safely process a single post
         def safe_job_post_detection(post):
             try:
+                token_count = count_tokens(post)
+                logging.info(f"Input: {post[:128]}... (tokens: {token_count})")
+                logging.info("Request to job_post_detection...")
                 result = job_post_detection(post)
+                logging.info(f"Response: {result}")
                 # Add a small delay after each LLM call to prevent overloading
                 time.sleep(1.5)
                 return result
-            except Exception as e:
-                logging.warning(f"Error in job post detection: {e}")
+            except Exception as error:
+                logging.error(f"Error in job_post_detection: {error!s}", exc_info=True)
                 return None
 
-        # Process in chunks
-        for i in range(0, len(batch_df), CHUNK_SIZE):
-            chunk_end = min(i + CHUNK_SIZE, len(batch_df))
-            logging.info(
-                f"Processing chunk {i//CHUNK_SIZE + 1}/{(len(batch_df) + CHUNK_SIZE - 1)//CHUNK_SIZE}"
-            )
-
-            # Apply detection to chunk
-            batch_df.loc[i : chunk_end - 1, "is_job_post"] = batch_df.loc[
-                i : chunk_end - 1, "post"
-            ].apply(safe_job_post_detection)
-
-            # Log progress after each chunk
-            completed = chunk_end
-            percent_done = completed / len(batch_df) * 100
-            logging.info(
-                f"Completed {completed}/{len(batch_df)} posts ({percent_done:.1f}%)"
-            )
+        # Process all posts at once
+        batch_df.loc[:, "is_job_post"] = batch_df["post"].apply(safe_job_post_detection)
 
         job_post_mask = batch_df["is_job_post"].fillna(False)
         job_posts_count = job_post_mask.sum()
         stats.job_posts += job_posts_count
+
+        if job_posts_count == 0:
+            logging.info(
+                "No job posts found in this batch, skipping further processing"
+            )
+            return None
 
         # Calculate state statistics
         true_count = batch_df["is_job_post"].sum()
@@ -278,42 +286,38 @@ def process_batch(
         # Safe version of single job post detection
         def safe_single_job_detection(post):
             try:
+                token_count = count_tokens(post)
+                logging.info(f"Input: {post[:128]}... (tokens: {token_count})")
+                logging.info("Request to single_job_post_detection...")
                 result = single_job_post_detection(post)
+                logging.info(f"Response: {result}")
                 # Add a small delay after each LLM call
                 time.sleep(1.5)
                 return result
             except Exception as e:
-                logging.warning(f"Error in single job post detection: {e}")
+                logging.error(
+                    f"Error in single_job_post_detection: {e!s}", exc_info=True
+                )
                 return None
 
         # Only process posts that were identified as job posts
         job_posts_df = batch_df[job_post_mask]
 
         if len(job_posts_df) > 0:
-            # Process in chunks
-            for i in range(0, len(job_posts_df), CHUNK_SIZE):
-                chunk_end = min(i + CHUNK_SIZE, len(job_posts_df))
-                chunk_indices = job_posts_df.index[i:chunk_end]
-
-                logging.info(
-                    f"Processing single post detection chunk {i//CHUNK_SIZE + 1}/{(len(job_posts_df) + CHUNK_SIZE - 1)//CHUNK_SIZE}"
-                )
-
-                # Apply detection to chunk
-                batch_df.loc[chunk_indices, "is_single_job_post"] = job_posts_df.loc[
-                    chunk_indices, "post"
-                ].apply(safe_single_job_detection)
-
-                # Log progress
-                completed = chunk_end
-                percent_done = completed / len(job_posts_df) * 100
-                logging.info(
-                    f"Completed {completed}/{len(job_posts_df)} job posts ({percent_done:.1f}%)"
-                )
+            # Process all job posts at once
+            batch_df.loc[job_posts_df.index, "is_single_job_post"] = job_posts_df[
+                "post"
+            ].apply(safe_single_job_detection)
 
         single_post_mask = batch_df["is_single_job_post"].fillna(False)
         single_posts_count = single_post_mask.sum()
         stats.single_job_posts += single_posts_count
+
+        if single_posts_count == 0:
+            logging.info(
+                "No single job posts found in this batch, skipping further processing"
+            )
+            return None
 
         # Calculate state statistics
         true_count = batch_df["is_single_job_post"].sum()
@@ -346,37 +350,67 @@ def process_batch(
 
         def safe_match_score(post: str) -> float | None:
             try:
-                score = match_cv_with_job(cv_content, post)
+                cv_token_count = count_tokens(cv_content)
+                post_token_count = count_tokens(post)
+                total_tokens = cv_token_count + post_token_count
+
+                logging.info(f"Input: {post[:128]}... (tokens: {post_token_count})")
+                logging.info("Request to match_cv_with_job...")
+                logging.info(
+                    f"Query to structured_generate:\n"
+                    f"  - CV tokens: {cv_token_count}\n"
+                    f"  - Post tokens: {post_token_count}\n"
+                    f"  - Total tokens: {total_tokens}\n"
+                    f"  - Endpoint: {LLM_INSTANCE_URL}/structured_generate"
+                )
+
+                # Add retry logic for server errors
+                max_retries = 3
+                retry_delay = 5
+
+                for attempt in range(max_retries):
+                    try:
+                        score = match_cv_with_job(cv_content, post)
+                        logging.info(f"Response: {score}")
+                        score_value = float(score) if score is not None else None
+                        return score_value
+                    except requests.exceptions.HTTPError as e:
+                        if e.response.status_code == 500:
+                            if attempt < max_retries - 1:
+                                logging.warning(
+                                    f"Server error (500) on attempt {attempt + 1}/{max_retries}. "
+                                    f"Retrying in {retry_delay} seconds..."
+                                )
+                                time.sleep(retry_delay)
+                                retry_delay *= 2  # Exponential backoff
+                                continue
+                            else:
+                                logging.error(
+                                    f"All retry attempts failed for match_cv_with_job. "
+                                    f"Last error: {e!s}"
+                                )
+                                return None
+                        else:
+                            logging.error(f"HTTP error in match_cv_with_job: {e!s}")
+                            return None
+                    except Exception as e:
+                        logging.error(f"Unexpected error in match_cv_with_job: {e!s}")
+                        return None
+
                 # Add a larger delay after CV matching (more intensive)
                 time.sleep(3)
-                return float(score) if score is not None else None
+                return None
+
             except Exception as error:
-                logging.warning(f"⚠️ Error in match_cv_with_job: {error}")
+                logging.error(f"Error in match_cv_with_job: {error!s}", exc_info=True)
                 return None
 
         if posts_to_score > 0:
-            # Process in chunks for scoring
+            # Process all posts at once for scoring
             posts_to_score_df = batch_df[score_mask_simple]
-
-            for i in range(0, len(posts_to_score_df), CHUNK_SIZE):
-                chunk_end = min(i + CHUNK_SIZE, len(posts_to_score_df))
-                chunk_indices = posts_to_score_df.index[i:chunk_end]
-
-                logging.info(
-                    f"Processing scoring chunk {i//CHUNK_SIZE + 1}/{(len(posts_to_score_df) + CHUNK_SIZE - 1)//CHUNK_SIZE}"
-                )
-
-                # Apply scoring to chunk
-                batch_df.loc[chunk_indices, "score"] = posts_to_score_df.loc[
-                    chunk_indices, "post"
-                ].apply(safe_match_score)
-
-                # Log progress
-                completed = chunk_end
-                percent_done = completed / len(posts_to_score_df) * 100
-                logging.info(
-                    f"Completed scoring {completed}/{len(posts_to_score_df)} posts ({percent_done:.1f}%)"
-                )
+            batch_df.loc[posts_to_score_df.index, "score"] = posts_to_score_df[
+                "post"
+            ].apply(safe_match_score)
 
         # After all score calculations, convert decimal scores to percentage (0-100 scale)
         # This makes the comparison with threshold (85) work correctly
@@ -393,6 +427,12 @@ def process_batch(
         stats.posts_below_threshold += len(
             batch_df[score_mask_simple & (batch_df["score"] < MATCH_SCORE_THRESHOLD)]
         )
+
+        if threshold_count == 0:
+            logging.info(
+                "No posts above threshold found in this batch, skipping further processing"
+            )
+            return None
 
         # Calculate score statistics
         valid_scores = batch_df["score"].notna().sum()
@@ -421,6 +461,10 @@ def process_batch(
         )
         posts_to_parse = parsing_mask.sum()
 
+        if posts_to_parse == 0:
+            logging.info("No posts to parse in this batch, skipping parsing step")
+            return None
+
         # Calculate parsing statistics
         parsing_errors = batch_df["parsing_error"].sum()
         valid_parsing = (batch_df["post_structured"] != "{}").sum()
@@ -439,65 +483,79 @@ def process_batch(
 
         def safe_job_parsing(post: str) -> str:
             try:
-                parsed_data = job_post_parsing(post)
+                token_count = count_tokens(post)
+                logging.info(f"Input: {post[:128]}... (tokens: {token_count})")
+                logging.info("Request to job_post_parsing...")
+                logging.info(
+                    f"Query to structured_generate:\n"
+                    f"  - Post tokens: {token_count}\n"
+                    f"  - Endpoint: {LLM_INSTANCE_URL}/structured_generate"
+                )
+
+                # Add retry logic for server errors
+                max_retries = 3
+                retry_delay = 5  # seconds
+
+                for attempt in range(max_retries):
+                    try:
+                        parsed_data = job_post_parsing(post)
+                        logging.info(f"Response: {parsed_data}")
+
+                        if not parsed_data:
+                            return json.dumps({"full_description": post})
+
+                        # Handle case where LLM returns action-based format
+                        if isinstance(parsed_data, dict) and "action" in parsed_data:
+                            return json.dumps({"full_description": post})
+
+                        # Validate the parsed data structure
+                        if not isinstance(parsed_data, dict):
+                            return json.dumps({"full_description": post})
+
+                        try:
+                            # Attempt to serialize to ensure valid JSON
+                            json_str = json.dumps(parsed_data)
+                            return json_str
+                        except (TypeError, ValueError):
+                            return json.dumps({"full_description": post})
+
+                    except requests.exceptions.HTTPError as e:
+                        if e.response.status_code == 500:
+                            if attempt < max_retries - 1:
+                                logging.warning(
+                                    f"Server error (500) on attempt {attempt + 1}/{max_retries}. "
+                                    f"Retrying in {retry_delay} seconds..."
+                                )
+                                time.sleep(retry_delay)
+                                retry_delay *= 2  # Exponential backoff
+                                continue
+                            else:
+                                logging.error(
+                                    f"All retry attempts failed for job_post_parsing. "
+                                    f"Last error: {e!s}"
+                                )
+                                return json.dumps({"full_description": post})
+                        else:
+                            logging.error(f"HTTP error in job_post_parsing: {e!s}")
+                            return json.dumps({"full_description": post})
+                    except Exception as e:
+                        logging.error(f"Unexpected error in job_post_parsing: {e!s}")
+                        return json.dumps({"full_description": post})
+
                 # Add a larger delay after parsing (more intensive)
                 time.sleep(3)
-                if not parsed_data:
-                    logging.info("⚠️ job_post_parsing returned empty result")
-                    return json.dumps({"full_description": post})
-
-                # Handle case where LLM returns action-based format
-                if isinstance(parsed_data, dict) and "action" in parsed_data:
-                    logging.info(
-                        f"⚠️ LLM returned action format instead of job post data: {json.dumps(parsed_data)[:200]}..."
-                    )
-                    return json.dumps({"full_description": post})
-
-                # Validate the parsed data structure
-                if not isinstance(parsed_data, dict):
-                    logging.info(f"⚠️ Unexpected parsed_data type: {type(parsed_data)}")
-                    return json.dumps({"full_description": post})
-
-                try:
-                    # Attempt to serialize to ensure valid JSON
-                    json_str = json.dumps(parsed_data)
-                    return json_str
-                except (TypeError, ValueError) as json_error:
-                    logging.info(
-                        f"⚠️ Failed to serialize parsed data: {json_error}. Data: {parsed_data}"
-                    )
-                    return json.dumps({"full_description": post})
+                return json.dumps({"full_description": post})
 
             except Exception as error:
-                logging.info(
-                    f"⚠️ Error in job_post_parsing: {error}\nPost preview: {post[:200]}...",
-                    exc_info=True,
-                )
+                logging.error(f"Error in job_post_parsing: {error!s}", exc_info=True)
                 return json.dumps({"full_description": post})
 
         if posts_to_parse > 0:
-            # Process parsing in chunks
+            # Process all posts at once for parsing
             posts_to_parse_df = batch_df[parsing_mask]
-
-            for i in range(0, len(posts_to_parse_df), CHUNK_SIZE):
-                chunk_end = min(i + CHUNK_SIZE, len(posts_to_parse_df))
-                chunk_indices = posts_to_parse_df.index[i:chunk_end]
-
-                logging.info(
-                    f"Processing parsing chunk {i//CHUNK_SIZE + 1}/{(len(posts_to_parse_df) + CHUNK_SIZE - 1)//CHUNK_SIZE}"
-                )
-
-                # Apply parsing to chunk
-                batch_df.loc[chunk_indices, "post_structured"] = posts_to_parse_df.loc[
-                    chunk_indices, "post"
-                ].apply(safe_job_parsing)
-
-                # Log progress
-                completed = chunk_end
-                percent_done = completed / len(posts_to_parse_df) * 100
-                logging.info(
-                    f"Completed parsing {completed}/{len(posts_to_parse_df)} posts ({percent_done:.1f}%)"
-                )
+            batch_df.loc[posts_to_parse_df.index, "post_structured"] = (
+                posts_to_parse_df["post"].apply(safe_job_parsing)
+            )
 
         # Set timestamp and prepare final results
         batch_df.loc[:, "created_at"] = pd.Timestamp(
@@ -513,6 +571,12 @@ def process_batch(
             )
         ]
         final_count = len(final_df)
+
+        if final_count == 0:
+            logging.info(
+                "No valid posts found in this batch after all processing steps"
+            )
+            return None
 
         logging.info("\n" + "=" * 80)
         logging.info("🏁 FINAL RESULTS")
@@ -565,17 +629,22 @@ def clean_and_move_data():
             logging.info("No data to process: DataFrame is empty")
             return
 
-        # Use an extremely small batch size to prevent model server overload
-        MICRO_BATCH_SIZE = 2  # Very small batch size to prevent server overload
-        total_batches = (len(df) + MICRO_BATCH_SIZE - 1) // MICRO_BATCH_SIZE
+        total_batches = (len(df) + DATA_BATCH_SIZE - 1) // DATA_BATCH_SIZE
         logging.info(
-            f"Starting processing of {len(df)} records in {total_batches} micro-batches (batch size: {MICRO_BATCH_SIZE})"
+            f"Starting processing of {len(df)} records in {total_batches} batches (batch size: {DATA_BATCH_SIZE})"
         )
 
         # Process batches
-        for batch_num, i in enumerate(range(0, len(df), MICRO_BATCH_SIZE), 1):
+        for batch_num in range(1, total_batches + 1):
             try:
-                batch_df = df[i : i + MICRO_BATCH_SIZE].copy()
+                start_idx = (batch_num - 1) * DATA_BATCH_SIZE
+                end_idx = min(start_idx + DATA_BATCH_SIZE, len(df))
+                batch_df = df.iloc[start_idx:end_idx].copy()
+
+                # Log batch start with clear visual separation
+                logging.info("\n" + "=" * 80)
+                logging.info(f"🔄 STARTING BATCH {batch_num}/{total_batches}")
+                logging.info("=" * 80)
 
                 # Ensure proper column dtypes before processing
                 if "score" in batch_df.columns:
@@ -598,29 +667,33 @@ def clean_and_move_data():
                         [{str(k): v for k, v in record.items()} for record in records],
                     )
                     logging.info(
-                        f"Processed and loaded batch {batch_num}, size: {len(records)}"
+                        f"✅ Successfully processed and loaded batch {batch_num}/{total_batches}, size: {len(records)}"
                     )
                 else:
-                    logging.info(f"No valid records in batch {batch_num}")
+                    logging.info(
+                        f"⚠️ No valid records in batch {batch_num}/{total_batches}"
+                    )
 
                 # Add a delay between batches to allow the model server to recover
                 if batch_num % 10 == 0:
                     logging.info(
-                        f"Taking a 30-second break after batch {batch_num} to let the model server recover"
+                        f"⏳ Taking a 30-second break after batch {batch_num} to let the model server recover"
                     )
                     time.sleep(30)
                 else:
-                    logging.info(f"Small pause between batches ({batch_num})")
+                    logging.info(
+                        f"⏳ Small pause between batches ({batch_num}/{total_batches})"
+                    )
                     time.sleep(3)
 
             except Exception as batch_error:
                 logging.error(
-                    f"Batch {batch_num} processing failed: {batch_error!s}",
+                    f"❌ Batch {batch_num}/{total_batches} processing failed: {batch_error!s}",
                     exc_info=True,
                 )
                 # Add longer pause after error
                 logging.info(
-                    f"Taking a 60-second break after error in batch {batch_num}"
+                    f"⏳ Taking a 60-second break after error in batch {batch_num}/{total_batches}"
                 )
                 time.sleep(60)
                 continue

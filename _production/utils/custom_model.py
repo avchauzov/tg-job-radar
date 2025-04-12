@@ -87,12 +87,12 @@ class CustomModelClient:
             return data.get("generated_text", "")
         except requests.exceptions.Timeout:
             raise LLMError("Request to model server timed out")
-        except requests.exceptions.RequestException as e:
-            raise LLMError(f"Failed to connect to model server: {e!s}")
+        except requests.exceptions.RequestException as error:
+            raise LLMError(f"Failed to connect to model server: {error!s}")
         except json.JSONDecodeError:
             raise LLMResponseError("Failed to parse response from model server")
-        except Exception as e:
-            raise LLMError(f"Unexpected error when calling model server: {e!s}")
+        except Exception as error:
+            raise LLMError(f"Unexpected error when calling model server: {error!s}")
 
 
 class StructuredModelClient(CustomModelClient):
@@ -178,15 +178,15 @@ class StructuredModelClient(CustomModelClient):
             except json.JSONDecodeError:
                 raise LLMResponseError("Failed to parse response from model server")
 
-            except Exception as e:
+            except Exception as error:
                 if (
-                    hasattr(e, "__module__")
-                    and e.__module__ == "pydantic.error_wrappers"
+                    hasattr(error, "__module__")
+                    and error.__module__ == "pydantic.error_wrappers"
                 ):
                     raise LLMResponseError(
-                        f"Failed to validate response with model: {e!s}"
+                        f"Failed to validate response with model: {error!s}"
                     )
-                raise LLMError(f"Unexpected error when calling model server: {e!s}")
+                raise LLMError(f"Unexpected error when calling model server: {error!s}")
 
         # This line should never be reached due to the exception in the final iteration
         # but it's needed to satisfy the return type checker
@@ -197,7 +197,7 @@ class StructuredModelClient(CustomModelClient):
 def get_custom_model_client() -> CustomModelClient:
     """Get a singleton instance of the custom model client."""
     return CustomModelClient(
-        base_url=CUSTOM_MODEL_CONFIG["BASE_URL"],
+        base_url=CUSTOM_MODEL_CONFIG["LLM_INSTANCE_URL"],
         timeout=CUSTOM_MODEL_CONFIG["TIMEOUT"],
         default_temperature=CUSTOM_MODEL_CONFIG["DEFAULT_TEMPERATURE"],
         default_max_tokens=CUSTOM_MODEL_CONFIG["DEFAULT_MAX_TOKENS"],
@@ -207,7 +207,7 @@ def get_custom_model_client() -> CustomModelClient:
 def get_structured_model_client() -> StructuredModelClient:
     """Get a singleton instance of the structured model client."""
     return StructuredModelClient(
-        base_url=CUSTOM_MODEL_CONFIG["BASE_URL"],
+        base_url=CUSTOM_MODEL_CONFIG["LLM_INSTANCE_URL"],
         timeout=CUSTOM_MODEL_CONFIG["TIMEOUT"],
         default_temperature=CUSTOM_MODEL_CONFIG["DEFAULT_TEMPERATURE"],
         default_max_tokens=CUSTOM_MODEL_CONFIG["DEFAULT_MAX_TOKENS"],
