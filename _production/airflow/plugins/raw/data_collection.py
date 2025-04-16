@@ -17,7 +17,7 @@ from _production.utils.common import generate_hash, process_date, setup_logging
 from _production.utils.influxdb import store_metrics
 from _production.utils.sql import batch_insert_to_db, fetch_from_db
 from _production.utils.text import (
-    clean_job_description,
+    clean_text,
     contains_keywords,
     is_duplicate_post,
 )
@@ -153,7 +153,7 @@ def scrape_channel(tg_client, channel, last_date, stats: ScrapingStats):
             continue
 
         job_description = message.text
-        job_description_cleaned = clean_job_description(job_description)
+        job_description_cleaned = clean_text(job_description)
         if not contains_keywords(
             text=job_description_cleaned, keywords=DESIRED_KEYWORDS
         ):

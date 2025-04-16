@@ -13,10 +13,10 @@ Supports custom local model server based on configuration.
 import json
 import logging
 import time
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar
 
 import requests
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from _production import LLM_INSTANCE_URL
 from _production.utils.custom_model import get_custom_model_client
@@ -29,9 +29,12 @@ from _production.utils.exceptions import (
 from _production.utils.instructor_wrapper import from_custom_model
 from _production.utils.prompts import (
     CLEAN_JOB_POST_PROMPT,
-    CV_MATCHING_PROMPT,
+    EXPERIENCE_MATCHING_PROMPT,
+    JOB_POST_DETECTION_PROMPT,
     JOB_POST_PARSING_PROMPT,
     SINGLE_JOB_POST_DETECTION_PROMPT,
+    SKILLS_MATCHING_PROMPT,
+    SOFT_SKILLS_MATCHING_PROMPT,
 )
 
 T = TypeVar("T", bound=BaseModel)
@@ -52,15 +55,54 @@ class CleanJobPost(BaseModel):
     and other key attributes needed for matching and analysis.
     """
 
-    job_title: str | None
-    seniority_level: str | None
-    location: str | None
-    salary_range: str | None
-    company_name: str | None
-    description: str | None
-    skills: (
-        str | None
-    )  # Combined technical and professional skills, ordered by importance
+    job_title: str | None = Field(
+        default=None,
+        description="Standardized job title",
+        examples=["Senior Software Engineer", "Data Scientist"],
+    )
+    seniority_level: str | None = Field(
+        default=None,
+        description="Standardized seniority level",
+        examples=["Senior", "Mid-level", "Junior"],
+    )
+    location: str | None = Field(
+        default=None,
+        description="Standardized location format",
+        examples=["Berlin, Germany", "Remote"],
+    )
+    salary_range: str | None = Field(
+        default=None,
+        description="Standardized salary range",
+        examples=["€85K-120K", "$100K-150K"],
+    )
+    company_name: str | None = Field(
+        default=None,
+        description="Standardized company name",
+        examples=["TechCorp Solutions", "Startup Inc."],
+    )
+    description: str | None = Field(
+        default=None, description="Cleaned and standardized job description"
+    )
+    skills: str | None = Field(
+        default=None,
+        description="Combined technical and professional skills, ordered by importance",
+    )
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "job_title": "Senior Software Engineer",
+                    "seniority_level": "Senior",
+                    "location": "Berlin, Germany",
+                    "salary_range": "€85K-120K",
+                    "company_name": "TechCorp Solutions",
+                    "description": "We're seeking an experienced Backend Engineer...",
+                    "skills": "Python, Django, FastAPI, PostgreSQL, Redis, Docker, Kubernetes",
+                }
+            ]
+        }
+    }
 
 
 def validate_text_input(
@@ -89,10 +131,45 @@ def _make_llm_call(
     response_format: type[T],
     max_retries: int = 5,
     sleep_time: int = 10,
-    max_tokens: int = 1024,
+    max_tokens: int = 512,
     temperature: float = 0.0,
 ) -> T | None:
-    """Make LLM API calls with retry logic."""
+    """Make LLM API calls with retry logic.
+
+    Args:
+        messages: List of message dictionaries with 'role' and 'content' keys
+        response_format: Pydantic model class for structured response
+        max_retries: Maximum number of retry attempts
+        sleep_time: Initial sleep time between retries
+        max_tokens: Maximum tokens to generate (must be positive)
+        temperature: Sampling temperature (must be between 0.0 and 1.0)
+
+    Returns:
+        T | None: Parsed response or None if all retries fail
+
+    Raises:
+        LLMInputError: If input validation fails
+    """
+    # Validate messages
+    if not messages:
+        raise LLMInputError("Messages list cannot be empty")
+
+    for msg in messages:
+        if not isinstance(msg, dict):
+            raise LLMInputError("Each message must be a dictionary")
+        if not all(isinstance(k, str) and isinstance(v, str) for k, v in msg.items()):
+            raise LLMInputError("Message keys and values must be strings")
+        if "role" not in msg or "content" not in msg:
+            raise LLMInputError("Each message must have 'role' and 'content' keys")
+
+    # Validate temperature
+    if not 0.0 <= temperature <= 1.0:
+        raise LLMInputError("Temperature must be between 0.0 and 1.0")
+
+    # Validate max_tokens
+    if max_tokens <= 0:
+        raise LLMInputError("max_tokens must be positive")
+
     start_time = time.time()
 
     system_message = next(
@@ -102,39 +179,17 @@ def _make_llm_call(
         (msg["content"] for msg in messages if msg["role"] == "user"), ""
     )
 
-    call_type = str(response_format.__name__)  # Get name of the model for logging
+    call_type = str(response_format.__name__)
 
-    # Calculate total input size in tokens using SentencePiece
-    try:
-        import sentencepiece as spm
+    system_tokens = len(system_message) // 4  # Approximate 4 chars per token
+    user_tokens = len(user_message) // 4
+    total_input_tokens = system_tokens + user_tokens
 
-        # Initialize SentencePiece processor
-        sp = spm.SentencePieceProcessor()
-        # Load the model's tokenizer (assuming it's in the same directory)
-        sp.load(
-            "/home/tg-job-radar/_production/utils/tokenizer.model"
-        )  # Adjust path as needed
-
-        # Encode messages
-        system_tokens = sp.encode_as_ids(system_message)
-        user_tokens = sp.encode_as_ids(user_message)
-        total_input_tokens = len(system_tokens) + len(user_tokens)
-
-        logging.info(f"Using SentencePiece tokenizer for {call_type}")
-        logging.info(f"Total input size: {total_input_tokens} tokens")
-        logging.info(
-            f"System tokens: {len(system_tokens)}, User tokens: {len(user_tokens)}"
-        )
-
-    except Exception as e:
-        logging.warning(
-            f"Failed to use SentencePiece: {e}, falling back to character count"
-        )
-        # Fallback: rough estimate of 4 chars per token
-        total_input_tokens = (len(system_message) + len(user_message)) // 4
-        logging.info(
-            f"Using character-based token estimation: {total_input_tokens} tokens"
-        )
+    logging.info(f"Using character-based token estimation for {call_type}")
+    logging.info(f"Total input size (estimated): {total_input_tokens} tokens")
+    logging.info(
+        f"System tokens (estimated): {system_tokens}, User tokens (estimated): {user_tokens}"
+    )
 
     # Adjust timeout based on input tokens and model type
     base_timeout = 60  # Increased base timeout to 60s
@@ -170,8 +225,8 @@ def _make_llm_call(
                 f"Server status check failed with status {status_response.status_code}"
             )
             return False
-        except Exception as e:
-            logging.warning(f"Server status check failed: {e}")
+        except Exception as error:
+            logging.warning(f"Server status check failed: {error}")
             return False
 
     for attempt in range(max_retries):
@@ -222,7 +277,7 @@ def _make_llm_call(
                 f"Total processing time for {call_type}: {total_duration:.2f}s"
             )
 
-            return response
+            return response_format.model_validate(response)
 
         except requests.exceptions.Timeout:
             attempt_duration = time.time() - attempt_start
@@ -291,23 +346,32 @@ def job_post_detection(post, max_retries=3, sleep_time=10):
     start_time = time.time()
 
     class JobPost(BaseModel):
-        is_job_description: bool
+        """Model for job post detection response.
 
-    # Use a more concise version of the prompt for faster processing
-    concise_prompt = """You are an expert job post classifier. Determine if the provided text contains a job posting or employment opportunity.
-    Return 'true' only if the text directly advertises a job opening. Return 'false' for all other content.
+        This model represents the binary classification result for whether a text contains a job posting.
+        A job posting must include a specific job title and at least two of the following:
+        - Job responsibilities/requirements
+        - Application instructions
+        - Employment terms (salary, location, work type)
+        - Company hiring information
+        - Recruiter or hiring manager contacts
+        """
 
-    Think step-by-step:
-    1. Does this look like a job listing or recruitment post?
-    2. Does it mention position details, required skills, or application process?
-    3. Is it clearly advertising employment opportunities?
+        is_job_post: Literal[True, False] = Field(
+            ...,
+            description="Whether the text contains a job posting",
+        )
 
-    Your output should be a JSON value with this schema: {"is_job_description": boolean}"""
+        model_config = {
+            "json_schema_extra": {
+                "examples": [{"is_job_post": True}, {"is_job_post": False}]
+            }
+        }
 
     messages = [
         {
             "role": "system",
-            "content": concise_prompt,
+            "content": JOB_POST_DETECTION_PROMPT,
         },
         {
             "role": "user",
@@ -320,7 +384,7 @@ def job_post_detection(post, max_retries=3, sleep_time=10):
     processing_time = time.time() - start_time
     logging.info(f"Job post detection completed in {processing_time:.2f}s")
 
-    return result.is_job_description if result else None
+    return result.is_job_post if result else None
 
 
 def single_job_post_detection(post, max_retries=3, sleep_time=10):
@@ -328,7 +392,18 @@ def single_job_post_detection(post, max_retries=3, sleep_time=10):
     start_time = time.time()
 
     class SingleJobPost(BaseModel):
-        is_single_post: bool
+        """Response model for single job post detection."""
+
+        is_single_post: bool = Field(
+            description="Whether the text contains exactly one job posting",
+            examples=[True, False],
+        )
+
+        model_config = {
+            "json_schema_extra": {
+                "examples": [{"is_single_post": True}, {"is_single_post": False}]
+            }
+        }
 
     messages = [
         {
@@ -352,129 +427,145 @@ def single_job_post_detection(post, max_retries=3, sleep_time=10):
 def match_cv_with_job(
     cv_text: str, post: str, max_retries: int = 5, sleep_time: int = 10
 ) -> float | None:
-    """Evaluates match between CV and job post using a comprehensive single-call approach."""
+    """Evaluates match between CV and job post using separate prompts for each category.
+
+    Args:
+        cv_text: The candidate's CV text
+        post: The job posting text
+        max_retries: Maximum number of retry attempts
+        sleep_time: Initial sleep time between retries
+
+    Returns:
+        float | None: The final matching score (0-100) or None if evaluation fails
+    """
     start_time = time.time()
 
     try:
         validate_text_input(cv_text, "CV text")
         validate_text_input(post, "Job post")
 
-        # Truncate inputs if they're too long
-        max_input_length = 32000  # Half of MAX_TEXT_LENGTH to leave room for prompt
+        max_input_length = 32000
         cv_text = cv_text[:max_input_length]
         post = post[:max_input_length]
 
-        # Define a more structured response model that captures all three areas
-        class CVMatchDetailed(BaseModel):
-            experience_score: float
-            skills_score: float
-            soft_skills_score: float
-            final_score: float
+        class CategoryMatchScore(BaseModel):
+            """Response model for category match score."""
 
-        messages = [
-            {
-                "role": "system",
-                "content": CV_MATCHING_PROMPT,
-            },
-            {
-                "role": "user",
-                "content": f"""
-                CV:
-                {cv_text}
+            score: int = Field(
+                ge=1,
+                le=3,
+                description="Match score between 1-3 where 1=excellent, 2=good, 3=poor",
+            )
 
-                Job Post:
-                {post}
+            model_config = {
+                "json_schema_extra": {
+                    "examples": [{"score": 1}, {"score": 2}, {"score": 3}]
+                }
+            }
 
-                Provide your response in this exact JSON format:
-                {{
-                    "experience_score": <your calculated score>,
-                    "skills_score": <your calculated score>,
-                    "soft_skills_score": <your calculated score>,
-                    "final_score": <your calculated weighted score>
-                }}
+        def evaluate_category(prompt: str, category_name: str) -> int | None:
+            messages = [
+                {
+                    "role": "system",
+                    "content": prompt,
+                },
+                {
+                    "role": "user",
+                    "content": f"""
+                    CV:
+                    {cv_text}
 
-                IMPORTANT:
-                - Each score should be between 0 and 100
-                - Calculate scores based on actual content analysis
-                - Do not return fixed or default values
-                - Provide different scores for different job posts
-                """,
-            },
-        ]
+                    Job Post:
+                    {post}
 
-        # Set explicit token limits
-        result = _make_llm_call(
-            messages,
-            CVMatchDetailed,
-            max_retries,
-            sleep_time,
-            max_tokens=1024,  # Limit response tokens
-            temperature=0.0,  # Ensure deterministic output
+                    Provide your response in this exact JSON format:
+                    {{
+                        "score": <your calculated score>
+                    }}
+
+                    IMPORTANT:
+                    - Score should be 1, 2, or 3
+                    - 1 = Exceeds or meets all requirements
+                    - 2 = Meets most requirements
+                    - 3 = Misses critical requirements
+                    - Calculate score based on actual content analysis
+                    - Do not return fixed or default values
+                    """,
+                },
+            ]
+
+            result = _make_llm_call(
+                messages,
+                CategoryMatchScore,
+                max_retries,
+                sleep_time,
+                max_tokens=512,
+                temperature=0.0,
+            )
+
+            if result:
+                raw_score = result.score
+                logging.info(f"{category_name} raw score: {raw_score}")
+                return raw_score
+            return 2
+
+        def normalize_score(score) -> float:
+            """Normalize score to integer in range 1-3."""
+            if score is None:
+                return 2.0  # Default to worst case for missing scores
+
+            # Handle float values by rounding to nearest integer
+            if isinstance(score, float):
+                score = round(score)
+
+            # Ensure score is within valid range
+            if score < 1:
+                return 1
+            elif score > 3:
+                return 3
+
+            return float(score)
+
+        # Evaluate each category
+        experience_score = evaluate_category(EXPERIENCE_MATCHING_PROMPT, "Experience")
+        skills_score = evaluate_category(SKILLS_MATCHING_PROMPT, "Skills")
+        soft_skills_score = evaluate_category(
+            SOFT_SKILLS_MATCHING_PROMPT, "Soft Skills"
         )
-        if result:
-            # Log individual scores for debugging
+
+        # Check if we got valid scores for at least one category
+        if any(
+            score is not None
+            for score in [experience_score, skills_score, soft_skills_score]
+        ):
+            # Normalize all scores to valid range
+            experience_norm = normalize_score(experience_score)
+            skills_norm = normalize_score(skills_score)
+            soft_skills_norm = normalize_score(soft_skills_score)
+
             logging.info(
-                f"CV Matching Scores:\n"
-                f"  - Experience: {result.experience_score}\n"
-                f"  - Skills: {result.skills_score}\n"
-                f"  - Soft Skills: {result.soft_skills_score}\n"
-                f"  - Final: {result.final_score}"
+                f"Normalized scores - Experience: {experience_norm}, Skills: {skills_norm}, Soft Skills: {soft_skills_norm}"
             )
 
-            # Verify the final score calculation is correct
-            calculated_score = (
-                (result.skills_score * 0.45)
-                + (result.experience_score * 0.40)
-                + (result.soft_skills_score * 0.15)
+            # Calculate weighted average
+            final_score = (
+                (skills_norm * 0.45)
+                + (experience_norm * 0.40)
+                + (soft_skills_norm * 0.15)
             )
-
-            # If there's a significant discrepancy, use our calculation
-            if abs(calculated_score - result.final_score) > 2:
-                logging.warning(
-                    f"Correcting LLM score calculation: {result.final_score} -> {calculated_score}"
-                )
-                return calculated_score
 
             processing_time = time.time() - start_time
             logging.info(
-                f"CV matching completed in {processing_time:.2f}s with score: {result.final_score}"
+                f"CV matching completed in {processing_time:.2f}s with score: {final_score}"
             )
+            return final_score
 
-            return result.final_score
-
-        processing_time = time.time() - start_time
-        logging.info(f"CV matching completed in {processing_time:.2f}s with no result")
         return None
 
-    except LLMInputError as error:
-        processing_time = time.time() - start_time
-        logging.error(f"Input validation failed in {processing_time:.2f}s: {error!s}")
-        return None
-    except (LLMError, LLMResponseError, LLMRateLimitError) as error:
-        processing_time = time.time() - start_time
-        logging.error(
-            f"LLM service error during CV matching in {processing_time:.2f}s: {error!s}"
-        )
-        # Retry the entire operation for connection errors
-        if max_retries > 0:
-            logging.info(
-                f"Retrying CV matching with {max_retries - 1} attempts remaining"
-            )
-            time.sleep(sleep_time)
-            return match_cv_with_job(
-                cv_text, post, max_retries=max_retries - 1, sleep_time=sleep_time * 2
-            )
-        return None
-    except (ValueError, TypeError, KeyError) as error:
-        processing_time = time.time() - start_time
-        logging.error(
-            f"Data processing error during CV matching in {processing_time:.2f}s: {error!s}"
-        )
-        return None
     except Exception as error:
         processing_time = time.time() - start_time
         logging.error(
-            f"Unexpected error during CV matching in {processing_time:.2f}s: {error!s}",
+            f"Error during CV matching in {processing_time:.2f}s: {error!s}",
             exc_info=True,
         )
         return None
@@ -511,16 +602,25 @@ def job_post_parsing(
             },
         ]
 
-        result = _make_llm_call(messages, JobPostStructure, max_retries, sleep_time)
-        if not result:
-            processing_time = time.time() - start_time
-            logging.info(
-                f"Job post parsing completed in {processing_time:.2f}s with no result"
-            )
-            return None
+        try:
+            result = _make_llm_call(messages, JobPostStructure, max_retries, sleep_time)
+            if not result:
+                processing_time = time.time() - start_time
+                logging.info(
+                    f"Job post parsing completed in {processing_time:.2f}s with no result"
+                )
+                return None
 
-        # Get initial parsed response
-        response = result.model_dump()
+            # Get initial parsed response
+            response = result.model_dump()
+
+            # Log the successful response for debugging
+            logging.debug(f"Successfully parsed structured data: {response}")
+
+        except LLMResponseError as error:
+            # Attempt manual parsing from raw response if available
+            logging.warning(f"Failed to parse structured response: {error}")
+            return None
 
         # Get cleaned response
         cleaning_start = time.time()

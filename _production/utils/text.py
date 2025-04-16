@@ -32,7 +32,7 @@ def contains_keywords(text: str, keywords: list[str] = []) -> bool:
         raise
 
 
-def clean_job_description(text):
+def clean_text(text):
     try:
         if not isinstance(text, str):
             logging.warning(

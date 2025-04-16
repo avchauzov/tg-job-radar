@@ -86,13 +86,17 @@ class CustomModelClient:
             data = response.json()
             return data.get("generated_text", "")
         except requests.exceptions.Timeout:
-            raise LLMError("Request to model server timed out")
+            raise LLMError("Request to model server timed out") from None
         except requests.exceptions.RequestException as error:
-            raise LLMError(f"Failed to connect to model server: {error!s}")
-        except json.JSONDecodeError:
-            raise LLMResponseError("Failed to parse response from model server")
+            raise LLMError(f"Failed to connect to model server: {error!s}") from error
+        except json.JSONDecodeError as error:
+            raise LLMResponseError(
+                "Failed to parse response from model server"
+            ) from error
         except Exception as error:
-            raise LLMError(f"Unexpected error when calling model server: {error!s}")
+            raise LLMError(
+                f"Unexpected error when calling model server: {error!s}"
+            ) from error
 
 
 class StructuredModelClient(CustomModelClient):
@@ -126,24 +130,30 @@ class StructuredModelClient(CustomModelClient):
         max_tokens = max_tokens if max_tokens is not None else self.default_max_tokens
 
         # Get model schema for validation
-        model_schema = response_model.model_json_schema()
+        # model_schema = response_model.model_json_schema()
 
         # Implementation with retry logic for timeout errors
         max_retries = 2
         base_timeout = self.timeout
+
+        logging.info(f"response_model: {response_model}")
 
         for attempt in range(max_retries + 1):
             try:
                 # Prepare payload for the structured_generate endpoint
                 payload = {
                     "messages": messages,
-                    "response_model": model_schema,
+                    "response_model": response_model.model_json_schema(),
                     "temperature": temperature,
                     "max_tokens": max_tokens,
                 }
 
+                logging.info(f"payload: {payload}")
+
                 # Use increasing timeout for each retry
                 current_timeout = base_timeout * (attempt + 1)
+
+                logging.info(f"current_timeout: {current_timeout}")
 
                 logging.debug(
                     f"Making structured_generate request with timeout {current_timeout}s (attempt {attempt+1}/{max_retries+1})"
@@ -154,8 +164,21 @@ class StructuredModelClient(CustomModelClient):
                     json=payload,
                     timeout=current_timeout,
                 )
+
+                logging.info(f"response: {response}")
+
                 response.raise_for_status()
                 data = response.json()
+
+                logging.info(f"data: {data}")
+
+                # Check if response indicates an error but contains partial JSON
+                if isinstance(data, dict) and "error" in data and "message" in data:
+                    error_msg = data.get("message", "")
+                    if error_msg and error_msg.strip().startswith("{"):
+                        logging.warning(
+                            "Received error with partial JSON. Attempting to extract JSON from error message."
+                        )
 
                 # Parse the response into the requested model
                 return response_model.model_validate(data)
@@ -170,13 +193,17 @@ class StructuredModelClient(CustomModelClient):
                     logging.error(
                         f"Request to model server timed out after {max_retries+1} attempts"
                     )
-                    raise LLMError("Request to model server timed out")
+                    raise LLMError("Request to model server timed out") from None
 
-            except requests.exceptions.RequestException as e:
-                raise LLMError(f"Failed to connect to model server: {e!s}")
+            except requests.exceptions.RequestException as error:
+                raise LLMError(
+                    f"Failed to connect to model server: {error!s}"
+                ) from error
 
-            except json.JSONDecodeError:
-                raise LLMResponseError("Failed to parse response from model server")
+            except json.JSONDecodeError as error:
+                raise LLMResponseError(
+                    "Failed to parse response from model server"
+                ) from error
 
             except Exception as error:
                 if (
@@ -185,12 +212,16 @@ class StructuredModelClient(CustomModelClient):
                 ):
                     raise LLMResponseError(
                         f"Failed to validate response with model: {error!s}"
-                    )
-                raise LLMError(f"Unexpected error when calling model server: {error!s}")
+                    ) from error
+                raise LLMError(
+                    f"Unexpected error when calling model server: {error!s}"
+                ) from error
 
         # This line should never be reached due to the exception in the final iteration
         # but it's needed to satisfy the return type checker
-        raise LLMError("Failed to get response from model server after all retries")
+        raise LLMError(
+            "Failed to get response from model server after all retries"
+        ) from None
 
 
 # Create client instances

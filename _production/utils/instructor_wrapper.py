@@ -101,8 +101,10 @@ class Messages:
                 temperature=temperature,
                 max_tokens=max_tokens,
             )
-        except Exception as e:
-            if isinstance(e, (LLMError, LLMResponseError)):
+        except Exception as error:
+            if isinstance(error, LLMError | LLMResponseError):
                 raise
-            logging.error(f"Error in instructor client: {e!s}")
-            raise LLMError(f"Failed to create structured response: {e!s}")
+            logging.error(f"Error in instructor client: {error!s}")
+            raise LLMError(
+                f"Failed to create structured response: {error!s}"
+            ) from error

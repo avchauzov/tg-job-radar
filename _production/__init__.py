@@ -91,7 +91,7 @@ PROBLEM_CHARS = {
 # Constants with type hints
 DATE_FORMAT: str = "%Y-%m-%d %H:%M:%S"
 TEXT_SIMILARITY_THRESHOLD: float = 0.90
-MATCH_SCORE_THRESHOLD: int = 85  # Value between 0-100
+MATCH_SCORE_THRESHOLD: float = 2.0  # Value between 1.0-3.0
 
 LOOKBACK_DAYS = 30
 
@@ -132,8 +132,8 @@ if missing_telegram_fields:
 if not CV_DOC_ID:
     raise ValueError("CV_DOC_ID environment variable is required")
 
-if not (0 <= MATCH_SCORE_THRESHOLD <= 100):
-    raise ValueError("MATCH_SCORE_THRESHOLD must be between 0 and 100")
+if not (1.0 <= MATCH_SCORE_THRESHOLD <= 3.0):
+    raise ValueError("MATCH_SCORE_THRESHOLD must be between 1.0 and 3.0")
 
 # Validate Telegram API_ID is numeric
 try:

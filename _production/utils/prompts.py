@@ -8,103 +8,80 @@ This module contains standardized prompts used by various LLM agents in the syst
 - Structured information extraction
 """
 
-JOB_POST_DETECTION_PROMPT = """You are an expert at analyzing job-related content.
-Determine if a text contains ANY job postings.
+JOB_POST_DETECTION_PROMPT = """Determine if text contains job postings.
 
-A job posting MUST include:
-    - Specific job title(s)
-    - At least TWO of the following:
-        - Job responsibilities/requirements
-        - Application instructions
-        - Employment terms (salary, location, work type)
-        - Company hiring information
-        - Recruiter or hiring manager contacts
+Required elements:
+- Job title
+- Plus at least TWO of:
+  - Responsibilities/requirements
+  - Application instructions
+  - Employment terms (salary, location, type)
+  - Company hiring info
+  - Recruiter contacts
 
-Do NOT classify as job postings:
-    - General career advice
-    - Industry news
-    - Company updates without hiring intent
-    - Educational content
-    - Network/community building posts
+Not job postings:
+- Career advice
+- Industry news
+- Company updates without hiring
+- Educational content
+- Networking posts
 
-Respond only with "True" or "False"."""
+Return only "True" or "False"."""
 
-SINGLE_JOB_POST_DETECTION_PROMPT = """You are an expert at analyzing job postings.
-Determine if a text contains EXACTLY ONE job posting.
+SINGLE_JOB_POST_DETECTION_PROMPT = """Determine if text contains EXACTLY ONE job posting.
 
-Indicators of a single job posting:
-    - One clear job title
-    - Consistent requirements for one role
-    - Single set of qualifications
+Single job indicators:
+- One job title
+- Consistent requirements
+- Single set of qualifications
 
-Indicators of multiple job postings:
-    - Multiple distinct job titles
-    - Different sets of requirements
-    - "Multiple positions available"
-    - Lists of different roles
-    - Separate sections for different positions
+Multiple jobs indicators:
+- Multiple job titles
+- Different requirements sets
+- "Multiple positions" mentions
+- Lists of different roles
+- Separate sections per position
 
-Respond only with "True" for single job posts or "False" for multiple job posts."""
+Return only "True" or "False"."""
 
-CV_MATCHING_PROMPT = """You are a technical recruiter evaluating candidate CVs against job requirements.
+EXPERIENCE_MATCHING_PROMPT = """Evaluate experience match between CV and job requirements.
 
-Analyze the match between the CV and job post using these three key areas:
+Areas to assess:
+- Years of relevant experience
+- Domain knowledge and expertise
+- Project scale and complexity
+- Career progression
 
-1. Experience Match (40% of final score):
-   - Years of Experience Match (50%): Compare required vs actual years
-   - Domain Knowledge Match (30%): Evaluate industry and domain expertise
-   - Project Scale Experience (20%): Assess complexity and scale of projects
+Return only a single integer value:
+1 - Exceeds or meets all requirements
+2 - Meets most requirements
+3 - Misses critical requirements"""
 
-2. Skills Match (45% of final score):
-   - Technical Skills Match (40%): Must-have technical requirements
-   - Education Requirements Match (25%): Required education level
-   - Tools and Technologies (20%): Required tools and frameworks
-   - Professional Certifications (15%): Relevant certifications
+SKILLS_MATCHING_PROMPT = """Evaluate skills match between CV and job requirements.
 
-3. Soft Skills Match (15% of final score):
-   - Communication Skills (30%): Written and verbal communication abilities
-   - Team Collaboration (30%): Experience in team environments
-   - Problem-Solving Approach (20%): Analytical and solution-oriented mindset
-   - Cultural Values Alignment (20%): Work style and company culture fit
+Areas to assess:
+- Technical skills and proficiency
+- Education and qualifications
+- Tools and technologies familiarity
+- Professional certifications
 
-Scoring Guidelines:
-95-100: Exceeds all requirements
-85-94: Meets all requirements
-75-84: Meets most requirements
-65-74: Meets basic requirements
-50-64: Meets some requirements
-0-49: Missing critical requirements
+Return only a single integer value:
+1 - Exceeds or meets all requirements
+2 - Meets most requirements
+3 - Misses critical requirements"""
 
-Step-by-step evaluation process:
-1. First, analyze each component within the three key areas:
-   - For Experience Match:
-     * Assess years of experience: [Your reasoning here]
-     * Evaluate domain knowledge: [Your reasoning here]
-     * Analyze project scale experience: [Your reasoning here]
-     * Calculate Experience Match score: [Your calculation]
+SOFT_SKILLS_MATCHING_PROMPT = """Evaluate soft skills match between CV and job requirements.
 
-   - For Skills Match:
-     * Evaluate technical skills: [Your reasoning here]
-     * Assess education requirements: [Your reasoning here]
-     * Review tools and technologies knowledge: [Your reasoning here]
-     * Check professional certifications: [Your reasoning here]
-     * Calculate Skills Match score: [Your calculation]
+Areas to assess:
+- Communication abilities
+- Team collaboration experience
+- Problem-solving approach
+- Cultural fit and adaptability
 
-   - For Soft Skills Match:
-     * Evaluate communication skills: [Your reasoning here]
-     * Assess team collaboration: [Your reasoning here]
-     * Review problem-solving approach: [Your reasoning here]
-     * Analyze cultural values alignment: [Your reasoning here]
-     * Calculate Soft Skills Match score: [Your calculation]
-
-2. Then calculate the final weighted score:
-   - Experience Match (40%): [Score] x 0.4 = [Weighted score]
-   - Skills Match (45%): [Score] x 0.45 = [Weighted score]
-   - Soft Skills Match (15%): [Score] x 0.15 = [Weighted score]
-   - Final Score: [Sum of weighted scores]
-
-IMPORTANT: Calculate all numeric values yourself. Do not include any mathematical expressions.
-Return only the final calculated score as a single number."""
+Return only a single integer value:
+1 - Exceeds or meets all requirements
+2 - Meets most requirements
+3 - Misses critical requirements"""
 
 CLEAN_JOB_POST_PROMPT = """You are an expert at standardizing job posting data.
 
