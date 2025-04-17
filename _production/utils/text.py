@@ -52,6 +52,27 @@ def clean_text(text):
         return text
 
 
+def extensive_clean_text(text):
+    try:
+        if not isinstance(text, str):
+            logging.warning(
+                f"Expected a string, but got {type(text)}\n{text}\nReturning input as string."
+            )
+            return str(text)
+
+        # Keep only Russian and English letters, replace everything else with spaces
+        text = re.sub(r"[^а-яА-ЯёЁa-zA-Z]", " ", text)
+
+        # Clean up multiple spaces
+        text = re.sub(r"\s+", " ", text).strip()
+
+        return text
+
+    except Exception as error:
+        logging.warning(f"Error cleaning job description: {error}\n{text}")
+        return text
+
+
 def text_similarity(text1, text2):
     """Calculate similarity ratio between two texts."""
     return SequenceMatcher(None, text1, text2).ratio()

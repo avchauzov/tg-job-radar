@@ -80,9 +80,6 @@ class CleanJobPost(BaseModel):
         description="Standardized company name",
         examples=["TechCorp Solutions", "Startup Inc."],
     )
-    description: str | None = Field(
-        default=None, description="Cleaned and standardized job description"
-    )
     skills: str | None = Field(
         default=None,
         description="Combined technical and professional skills, ordered by importance",
@@ -97,7 +94,6 @@ class CleanJobPost(BaseModel):
                     "location": "Berlin, Germany",
                     "salary_range": "€85K-120K",
                     "company_name": "TechCorp Solutions",
-                    "description": "We're seeking an experienced Backend Engineer...",
                     "skills": "Python, Django, FastAPI, PostgreSQL, Redis, Docker, Kubernetes",
                 }
             ]
@@ -580,17 +576,6 @@ def job_post_parsing(
     try:
         validate_text_input(post, "Job post")
 
-        class JobPostStructure(BaseModel):
-            job_title: str
-            seniority_level: str
-            location: str
-            salary_range: str | None
-            company_name: str
-            description: str
-            skills: (
-                str  # Combined technical and professional skills, ordered by importance
-            )
-
         messages = [
             {
                 "role": "system",
@@ -603,7 +588,7 @@ def job_post_parsing(
         ]
 
         try:
-            result = _make_llm_call(messages, JobPostStructure, max_retries, sleep_time)
+            result = _make_llm_call(messages, CleanJobPost, max_retries, sleep_time)
             if not result:
                 processing_time = time.time() - start_time
                 logging.info(
@@ -622,21 +607,12 @@ def job_post_parsing(
             logging.warning(f"Failed to parse structured response: {error}")
             return None
 
-        # Get cleaned response
-        cleaning_start = time.time()
-        cleaned_response = clean_job_post_values(response)
-        cleaning_time = time.time() - cleaning_start
-        logging.info(f"Job post cleaning completed in {cleaning_time:.2f}s")
-
-        cleaned_response_filtered = {
-            key: value
-            for key, value in cleaned_response.items()
+        response_filtered = {
+            key: value.strip()
+            for key, value in response.items()
             if value and isinstance(value, str)
         }
-        if (
-            not cleaned_response_filtered
-            or "job_title" not in cleaned_response_filtered
-        ):
+        if not response_filtered:
             processing_time = time.time() - start_time
             logging.info(
                 f"Job post parsing completed in {processing_time:.2f}s but produced invalid result"
@@ -646,10 +622,10 @@ def job_post_parsing(
         # Single strip operation only on string values
         processing_time = time.time() - start_time
         logging.info(
-            f"Job post parsing completed in {processing_time:.2f}s for job: {cleaned_response_filtered.get('job_title', 'Unknown')}"
+            f"Job post parsing completed in {processing_time:.2f}s for job: {response_filtered}"
         )
 
-        return cleaned_response_filtered
+        return response_filtered
 
     except LLMInputError as error:
         processing_time = time.time() - start_time
