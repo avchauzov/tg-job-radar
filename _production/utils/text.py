@@ -60,6 +60,13 @@ def extensive_clean_text(text):
             )
             return str(text)
 
+        # Remove URLs but keep words (replace with space)
+        text = re.sub(r"https?://\S+", " ", text)
+        text = re.sub(r"www\.\S+", " ", text)
+
+        # Remove Telegram handles (@username)
+        text = re.sub(r"@\w+", " ", text)
+
         # Keep only Russian and English letters, replace everything else with spaces
         text = re.sub(r"[^а-яА-ЯёЁa-zA-Z]", " ", text)
 
@@ -67,7 +74,6 @@ def extensive_clean_text(text):
         text = re.sub(r"\s+", " ", text).strip()
 
         return text
-
     except Exception as error:
         logging.warning(f"Error cleaning job description: {error}\n{text}")
         return text

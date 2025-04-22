@@ -36,16 +36,37 @@ def format_email_content(df):
             ("skills", "Skills"),
             ("seniority_level", "Level"),
             ("salary_range", "Salary"),
-            ("description", "Description"),
             ("company_name", "Company"),
+            ("description", "Description"),
+            ("full_description", "Full Description"),
         ]
 
         formatted_fields = []
 
-        for field, display_name in field_order:
+        # First try all fields except description and full_description
+        for field, display_name in field_order[
+            :-2
+        ]:  # Exclude description and full_description
             value = job_dict.get(field)
             if value is not None:  # Only append if there's a value
                 formatted_fields.append(f"<strong>{display_name}:</strong> {value}")
+
+        # If no fields were added, try description or full_description
+        if not formatted_fields:
+            description = job_dict.get("description")
+            full_description = job_dict.get("full_description")
+
+            if description is not None:
+                formatted_fields.append(f"<strong>Description:</strong> {description}")
+            elif full_description is not None:
+                formatted_fields.append(
+                    f"<strong>Description:</strong> {full_description}"
+                )
+
+        if not formatted_fields:
+            for key, value in job_dict.items():
+                if key not in [item[0] for item in field_order]:
+                    raise ValueError(f"Invalid field: {key}")
 
         return formatted_fields
 
@@ -63,7 +84,7 @@ def format_email_content(df):
             html_parts.append(job_html)
 
     if not html_parts:
-        return "<p>No new job posts to display.</p>"
+        return None
 
     return f"""
     <html>

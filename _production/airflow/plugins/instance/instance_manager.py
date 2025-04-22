@@ -2,7 +2,6 @@
 
 This module provides functions for managing the lifecycle of the LLM server instance:
 - Starting the instance with retry logic
-- Stopping the instance with retry logic
 - Status checking with retries
 """
 
@@ -78,18 +77,45 @@ class InstanceManager:
         for attempt in range(max_retries):
             try:
                 url = f"{self.base_url}/status"
-                logging.info(f"Checking instance status at {url}")
+                logging.info(
+                    f"Checking instance status at {url} (attempt {attempt + 1}/{max_retries})"
+                )
 
-                response = self._session.post(
+                # Prepare request data
+                request_data = {
+                    "instance_id": instance_id,
+                    "region": region,
+                    "aws_access_key_id": aws_access_key_id,
+                    "aws_secret_access_key": aws_secret_access_key,
+                }
+
+                # Make request with explicit headers and method
+                response = requests.post(
                     url,
-                    json={
-                        "instance_id": instance_id,
-                        "region": region,
-                        "aws_access_key_id": aws_access_key_id,
-                        "aws_secret_access_key": aws_secret_access_key,
+                    json=request_data,
+                    headers={
+                        "Content-Type": "application/json",
+                        "Accept": "application/json",
                     },
                     timeout=self.timeout,
+                    allow_redirects=False,
                 )
+
+                # Log request and response details
+                logging.info("Request method: POST")
+                logging.info(f"Request URL: {url}")
+                logging.info(f"Request headers: {response.request.headers}")
+                logging.info(f"Response status: {response.status_code}")
+                logging.info(f"Response headers: {response.headers}")
+
+                if response.status_code == 405:
+                    logging.error(
+                        "Received 405 Method Not Allowed. This indicates the request was not sent as POST."
+                    )
+                    raise requests.exceptions.RequestException(
+                        "Request method was changed from POST to GET"
+                    )
+
                 response.raise_for_status()
                 status = InstanceStatus.model_validate(response.json())
 
@@ -179,6 +205,12 @@ class InstanceManager:
             url = f"{self.base_url}/start"
             logging.info(f"Starting instance at {url}")
 
+            # Use a longer timeout for the initial start request
+            start_timeout = 300  # 5 minutes
+            logging.info(
+                f"Using extended timeout of {start_timeout} seconds for instance startup"
+            )
+
             response = self._session.post(
                 url,
                 json={
@@ -187,96 +219,26 @@ class InstanceManager:
                     "aws_access_key_id": aws_access_key_id,
                     "aws_secret_access_key": aws_secret_access_key,
                 },
-                timeout=self.timeout,
+                timeout=start_timeout,
             )
             response.raise_for_status()
 
-            # Wait for instance to start
+            logging.info(
+                "Instance start request successful, waiting for instance to become operational..."
+            )
+
+            # Wait for instance to start with more retries and longer intervals
             return self._check_status(
                 instance_id=instance_id,
                 region=region,
                 aws_access_key_id=aws_access_key_id,
                 aws_secret_access_key=aws_secret_access_key,
+                max_retries=20,  # Increased from 10 to 20
+                sleep_time=60,  # Increased from 30 to 60 seconds
             )
 
         except requests.exceptions.RequestException as error:
             logging.error(f"Failed to start instance: {error!s}")
-            return InstanceStatus(
-                instance_id=instance_id,
-                state="error",
-                public_dns=None,
-                system_status=None,
-                instance_status=None,
-                message=str(error),
-            )
-
-    def stop_instance(
-        self,
-        instance_id: str,
-        region: str,
-        aws_access_key_id: str,
-        aws_secret_access_key: str,
-    ) -> InstanceStatus:
-        """Stop the LLM instance with retry logic.
-
-        Args:
-            instance_id: AWS EC2 instance ID
-            region: AWS region
-            aws_access_key_id: AWS access key ID
-            aws_secret_access_key: AWS secret access key
-
-        Returns:
-            Instance status after stopping
-        """
-        try:
-            # Log the parameters (without sensitive data)
-            logging.info("Stopping instance with parameters:")
-            logging.info(f"  instance_id: {instance_id}")
-            logging.info(f"  region: {region}")
-            logging.info(
-                f"  aws_access_key_id: {'*' * len(aws_access_key_id) if aws_access_key_id else 'None'}"
-            )
-            logging.info(
-                f"  aws_secret_access_key: {'*' * len(aws_secret_access_key) if aws_secret_access_key else 'None'}"
-            )
-
-            # Validate required parameters
-            if not instance_id:
-                raise ValueError("instance_id is required")
-            if not region:
-                raise ValueError("region is required")
-            if not aws_access_key_id:
-                raise ValueError("aws_access_key_id is required")
-            if not aws_secret_access_key:
-                raise ValueError("aws_secret_access_key is required")
-
-            url = f"{self.base_url}/stop"
-            logging.info(f"Stopping instance at {url}")
-
-            response = self._session.post(
-                url,
-                json={
-                    "instance_id": instance_id,
-                    "region": region,
-                    "aws_access_key_id": aws_access_key_id,
-                    "aws_secret_access_key": aws_secret_access_key,
-                },
-                timeout=self.timeout,
-            )
-            response.raise_for_status()
-
-            # Wait for instance to stop
-            return self._check_status(
-                instance_id=instance_id,
-                region=region,
-                aws_access_key_id=aws_access_key_id,
-                aws_secret_access_key=aws_secret_access_key,
-                max_retries=5,
-                sleep_time=10,
-            )
-
-        except requests.exceptions.RequestException as error:
-            logging.error(f"Failed to stop instance: {error!s}")
             return InstanceStatus(
                 instance_id=instance_id,
                 state="error",

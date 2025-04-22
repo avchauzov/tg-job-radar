@@ -60,7 +60,7 @@ def fetch_new_posts() -> pd.DataFrame | None:
 
 def create_email_message(
     chunk: pd.DataFrame, index: int, total_chunks: int
-) -> MIMEMultipart:
+) -> MIMEMultipart | None:
     """
     Create an email message for a chunk of posts.
 
@@ -70,13 +70,17 @@ def create_email_message(
         total_chunks: Total number of chunks
 
     Returns:
-        MIMEMultipart: Formatted email message
+        MIMEMultipart | None: Formatted email message or None if no valid content
     """
+    content = format_email_content(chunk)
+    if content is None:
+        return None
+
     message = MIMEMultipart("alternative")
     message["Subject"] = f"Andrew: Job Notifications ({index}/{total_chunks})"
     message["From"] = EMAIL["SENDER"]
     message["To"] = EMAIL["RECIPIENT"]
-    message.attach(MIMEText(format_email_content(chunk), "html"))
+    message.attach(MIMEText(content, "html"))
     return message
 
 
@@ -104,7 +108,20 @@ def process_chunk(chunk: pd.DataFrame, index: int, total_chunks: int) -> list[in
     Returns:
         List[int]: List of successfully processed post IDs
     """
+    # Validate chunk before processing
+    if chunk.empty:
+        logging.warning(f"Chunk {index}/{total_chunks} is empty, skipping")
+        return []
+
+    logging.info(f"Processing chunk {index}/{total_chunks} with {len(chunk)} posts")
     message = create_email_message(chunk, index, total_chunks)
+
+    # Skip if no valid content to send
+    if message is None:
+        logging.warning(
+            f"Chunk {index}/{total_chunks} has no valid content to send, skipping"
+        )
+        return []
 
     if send_email(message):
         logging.info(f"Email {index}/{total_chunks} sent successfully!")
@@ -194,11 +211,7 @@ def notify_me() -> None:
                 where_condition=STAGING_TO_PROD__WHERE,
                 json_columns=["post_structured"],
                 order_by_condition="""
-                    score DESC NULLS LAST,
-                    CASE
-                        WHEN post_structured::text LIKE '%\"full_description\"%' THEN 1
-                        ELSE 0
-                    END DESC
+                    score DESC NULLS LAST
                 """,
             )
         except Exception as move_error:

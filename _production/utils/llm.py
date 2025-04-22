@@ -31,7 +31,6 @@ from _production.utils.prompts import (
     CLEAN_JOB_POST_PROMPT,
     EXPERIENCE_MATCHING_PROMPT,
     JOB_POST_DETECTION_PROMPT,
-    JOB_POST_PARSING_PROMPT,
     SINGLE_JOB_POST_DETECTION_PROMPT,
     SKILLS_MATCHING_PROMPT,
     SOFT_SKILLS_MATCHING_PROMPT,
@@ -579,7 +578,7 @@ def job_post_parsing(
         messages = [
             {
                 "role": "system",
-                "content": JOB_POST_PARSING_PROMPT,
+                "content": CLEAN_JOB_POST_PROMPT,
             },
             {
                 "role": "user",
@@ -690,7 +689,6 @@ def clean_job_post_values(response: dict[str, Any]) -> dict[str, Any]:
             location=None,
             salary_range=None,
             company_name=None,
-            description=None,
             skills=None,
         ).model_dump()
 

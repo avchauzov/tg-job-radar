@@ -10,7 +10,6 @@ import datetime
 import json
 import logging
 import multiprocessing
-import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -56,9 +55,6 @@ class CleaningStats:
     posts_below_threshold: int = 0
     posts_with_structured_data: int = 0
     posts_without_structured_data: int = 0
-    parsing_errors: int = 0  # Track parsing errors
-    valid_parsing: int = 0  # Track successful parsing
-    empty_parsing: int = 0  # Track empty parsing results
     scores: list[float] = field(default_factory=list)
     execution_time_ms: float = 0.0
     server_errors: int = 0  # Track server errors
@@ -73,9 +69,6 @@ class CleaningStats:
                 "above_threshold_rate": 0.0,
                 "below_threshold_rate": 0.0,
                 "structured_data_rate": 0.0,
-                "parsing_error_rate": 0.0,
-                "valid_parsing_rate": 0.0,
-                "empty_parsing_rate": 0.0,
                 "score_mean": 0.0,
                 "score_std": 0.0,
                 "execution_time_ms": self.execution_time_ms,
@@ -106,21 +99,6 @@ class CleaningStats:
             if self.posts_above_threshold > 0
             else 0.0
         )
-        parsing_error_rate = (
-            (self.parsing_errors / self.total_posts * 100)
-            if self.total_posts > 0
-            else 0.0
-        )
-        valid_parsing_rate = (
-            (self.valid_parsing / self.total_posts * 100)
-            if self.total_posts > 0
-            else 0.0
-        )
-        empty_parsing_rate = (
-            (self.empty_parsing / self.total_posts * 100)
-            if self.total_posts > 0
-            else 0.0
-        )
 
         # Calculate score statistics
         score_mean = sum(self.scores) / len(self.scores)
@@ -135,9 +113,6 @@ class CleaningStats:
             "above_threshold_rate": float(above_threshold_rate),
             "below_threshold_rate": float(below_threshold_rate),
             "structured_data_rate": float(structured_data_rate),
-            "parsing_error_rate": float(parsing_error_rate),
-            "valid_parsing_rate": float(valid_parsing_rate),
-            "empty_parsing_rate": float(empty_parsing_rate),
             "score_mean": float(score_mean),
             "score_std": float(score_std),
             "execution_time_ms": float(self.execution_time_ms),
@@ -278,7 +253,7 @@ def process_batch(
         logging.info("✓ Initialized default values for all columns")
 
         # Step 1: Extensive cleaning
-        logging.info("\nSTEP 1: Extensive Text Cleaning")
+        logging.info("STEP 1: Extensive Text Cleaning")
         logging.info("-" * 40)
         batch_df.loc[:, "clean_post"] = batch_df["post"].apply(extensive_clean_text)
         batch_df = batch_df.loc[batch_df["clean_post"].notna()]
@@ -367,9 +342,8 @@ def process_batch(
                 JSON string containing cleaned post data
             """
             try:
-                token_count = count_tokens(post)
-                logging.info(f"Input: {post[:128]}... (tokens: {token_count})")
-                logging.info("Request to job_post_parsing...")
+                # Clean the text using regex
+                import re
 
                 # Replace multiple spaces with single space
                 cleaned = re.sub(r"\s+", " ", post)
@@ -387,8 +361,11 @@ def process_batch(
                 # Convert to JSON string
                 return json.dumps(structured_data)
             except Exception as error:
-                logging.error(f"Error in job_post_parsing: {error!s}", exc_info=True)
-                return json.dumps({"full_description": post})
+                logging.error(f"Error in safe_job_parsing: {error!s}", exc_info=True)
+                # Return minimal valid JSON on error
+                return json.dumps(
+                    {"description": post[:1024], "full_description": post}
+                )
 
         logging.info("\nSTEP 4: Job Post Parsing")
         logging.info("-" * 40)
@@ -413,25 +390,107 @@ def process_batch(
         logging.info("⏳ Pausing for 3 seconds between processing steps")
         time.sleep(3)
 
-        ###
+        return None
 
-        parsed_posts_df = single_job_posts_df.loc[
-            single_job_posts_df["post_structured"] != "{}"
-        ]
+        import sys
 
-        if parsed_posts_df.empty:
-            logging.info("❌ No single job posts found, skipping batch")
-            return None
+        sys.exit(0)
+
+        # Step 4: Initial CV Matching Score
+        logging.info("\nSTEP 4: Initial CV Matching Score")
+        logging.info("-" * 40)
+        score_mask_simple = single_job_posts_df["is_single_job_post"].fillna(False)
+        posts_to_score = score_mask_simple.sum()
+        logging.info(f"⚡ Quick scoring {posts_to_score} eligible posts")
+
+        return None
+
+        # Structured data parsing
+        logging.info("\n" + "-" * 40)
+        logging.info("STEP 1: Structured Data Parsing")
+        logging.info("-" * 40)
+
+        # Add a delay between steps
+        logging.info("Pausing for 3 seconds between processing steps")
+        time.sleep(3)
+
+        # Single job post detection - only for posts identified as job posts
+        logging.info("\n" + "-" * 40)
+        logging.info("STEP 2: Single Job Post Detection")
+        logging.info("-" * 40)
+
+        def safe_job_parsing(post: str) -> str:
+            try:
+                token_count = count_tokens(post)
+                logging.info(f"Input: {post[:128]}... (tokens: {token_count})")
+                logging.info("Request to job_post_parsing...")
+                logging.info(
+                    f"Query to structured_generate:\n"
+                    f"  - Post tokens: {token_count}\n"
+                    f"  - Endpoint: {LLM_INSTANCE_URL}/structured_generate"
+                )
+
+                # Add retry logic for server errors
+                max_retries = 3
+                retry_delay = 5  # seconds
+
+                for attempt in range(max_retries):
+                    try:
+                        parsed_data = job_post_parsing(post)
+                        logging.info(f"Response: {parsed_data}")
+
+                        if parsed_data is None:
+                            parsed_data = {}
+
+                        parsed_data["full_description"] = post
+
+                        try:
+                            # Attempt to serialize to ensure valid JSON
+                            json_str = json.dumps(parsed_data)
+                            return json_str
+                        except (TypeError, ValueError):
+                            return json.dumps({"full_description": post})
+
+                    except requests.exceptions.HTTPError as e:
+                        if e.response.status_code == 500:
+                            if attempt < max_retries - 1:
+                                logging.warning(
+                                    f"Server error (500) on attempt {attempt + 1}/{max_retries}. "
+                                    f"Retrying in {retry_delay} seconds..."
+                                )
+                                time.sleep(retry_delay)
+                                retry_delay *= 2  # Exponential backoff
+                                continue
+                            else:
+                                logging.error(
+                                    f"All retry attempts failed for job_post_parsing. "
+                                    f"Last error: {e!s}"
+                                )
+                                return json.dumps({"full_description": post})
+                        else:
+                            logging.error(f"HTTP error in job_post_parsing: {e!s}")
+                            return json.dumps({"full_description": post})
+                    except Exception as e:
+                        logging.error(f"Unexpected error in job_post_parsing: {e!s}")
+                        return json.dumps({"full_description": post})
+
+                # Add a larger delay after parsing (more intensive)
+                time.sleep(3)
+                return json.dumps({"full_description": post})
+
+            except Exception as error:
+                logging.error(f"Error in job_post_parsing: {error!s}", exc_info=True)
+                return json.dumps({"full_description": post})
+
+        # TODO: ADD
+        batch_df.loc[:, "post"] = batch_df["post"].apply(extensive_clean_text)
+
+        # Process all posts for parsing
+        batch_df.loc[:, "post_structured"] = batch_df["post"].apply(safe_job_parsing)
 
         # Calculate parsing statistics
-        parsing_errors = parsed_posts_df["parsing_error"].sum()
-        valid_parsing = (single_job_posts_df["post_structured"] != "{}").sum()
-        empty_parsing = initial_count - valid_parsing
-
-        # Update stats
-        stats.parsing_errors += parsing_errors
-        stats.valid_parsing += valid_parsing
-        stats.empty_parsing += empty_parsing
+        parsing_errors = batch_df["parsing_error"].sum()
+        valid_parsing = (batch_df["post_structured"] != "{}").sum()
 
         logging.info(
             f"📝 Parsing results:\n"
@@ -439,16 +498,16 @@ def process_batch(
             f"  - With parsing errors: {parsing_errors}\n"
             f"  - Parsing results:\n"
             f"    • Valid parsing: {valid_parsing} ({valid_parsing/initial_count*100:.1f}%)\n"
-            f"    • Empty results: {empty_parsing} ({empty_parsing/initial_count*100:.1f}%)"
+            f"    • Empty results: {initial_count - valid_parsing} ({((initial_count - valid_parsing)/initial_count)*100:.1f}%)"
         )
 
         # Set timestamp and prepare final results
-        parsed_posts_df.loc[:, "created_at"] = pd.Timestamp(
+        batch_df.loc[:, "created_at"] = pd.Timestamp(
             datetime.datetime.now(datetime.UTC)
         ).tz_localize(None)
 
         # Final results
-        final_df = parsed_posts_df.copy()
+        final_df = batch_df.copy()
         final_count = len(final_df)
 
         if final_count == 0:
@@ -513,7 +572,6 @@ def clean_and_move_data():
                 batch_df = df.iloc[start_idx:end_idx].copy()
 
                 # Log batch start with clear visual separation
-                logging.info("\n" + "=" * 80)
                 logging.info(f"🔄 STARTING BATCH {batch_num}/{total_batches}")
                 logging.info("=" * 80)
 
@@ -530,10 +588,6 @@ def clean_and_move_data():
                 )
 
                 if processed_df is not None and not processed_df.empty:
-                    # Ensure all numeric columns are properly converted to the right type
-                    if "score" in processed_df.columns:
-                        processed_df["score"] = processed_df["score"].astype(float)
-
                     records = processed_df.to_dict(orient="records")
                     batch_insert_to_db(
                         STAGING_DATA__POSTS,
@@ -586,10 +640,10 @@ def clean_and_move_data():
             },
         )
 
-        logging.info("✅ Successfully processed all data batches")
+        logging.info("Successfully processed all data batches")
 
     except Exception as error:
-        logging.error("❌ Data pipeline failed", exc_info=True)
+        logging.error("Data pipeline failed", exc_info=True)
         raise Exception(f"Data pipeline failed: {error!s}") from error
 
 
