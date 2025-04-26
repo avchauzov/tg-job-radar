@@ -101,6 +101,8 @@ MAX_RETRY_ATTEMPTS = 3
 
 GDOCS_TIMEOUT_SECONDS = 8
 MIN_CV_LENGTH = 128
+CV_COMPRESSION_RATIO = 5  # Ratio for CV summarization
+JOB_POST_COMPRESSION_RATIO = 3  # Ratio for job post rewriting
 
 RAW_DATA__TG_POSTS = "raw_data.tg_posts"
 STAGING_DATA__POSTS = "staging_data.posts"

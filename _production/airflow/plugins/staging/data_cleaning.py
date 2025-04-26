@@ -17,7 +17,6 @@ from typing import Any
 
 import pandas as pd
 import requests
-import tiktoken
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from _production import (
@@ -36,8 +35,11 @@ from _production.config.config_db import (
 from _production.utils.common import setup_logging
 from _production.utils.influxdb import store_metrics
 from _production.utils.llm import (
+    count_tokens,
     job_post_detection,
+    rewrite_job_post,
     single_job_post_detection,
+    summarize_cv_content,
 )
 from _production.utils.sql import batch_insert_to_db, fetch_from_db
 from _production.utils.text import extensive_clean_text
@@ -195,45 +197,107 @@ def fetch_cv_content(doc_id: str) -> str | None:
         raise
 
 
-def count_tokens(text: str) -> int:
-    """Count the number of tokens in a text using tiktoken."""
-    try:
-        encoding = tiktoken.get_encoding("cl100k_base")  # GPT-4 encoding
-        return len(encoding.encode(text))
-    except Exception as e:
-        logging.warning(f"Error counting tokens: {e!s}")
-        return len(text) // 4  # Fallback: rough estimate of 4 chars per token
+def safe_job_post_detection(post: str) -> bool | None:
+    """
+    Safely detect if a post contains a job posting with proper error handling and logging.
 
+    Args:
+        post: Text to analyze
 
-# Function to safely process a single post
-def safe_job_post_detection(post):
+    Returns:
+        Optional[bool]: True if job posting detected, False if not, None if error
+    """
     try:
+        # Validate input
+        if not post or not post.strip():
+            logging.warning("Empty post received for job post detection")
+            return None
+
+        # Count tokens and log input
         token_count = count_tokens(post)
-        logging.info(f"**Input (tokens: {token_count}):**\n{post[:128]}...")
-        logging.info("Request to job_post_detection...")
+        logging.info(f"Input tokens: {token_count}")
+
+        # Log first 256 chars for better context
+        preview = post[:256] + "..." if len(post) > 256 else post
+        logging.info(f"Input preview:\n{preview}")
+
+        # Check if input is too long
+        if token_count > 4000:  # GPT-4 context window is 8k, leave room for prompt
+            logging.warning(
+                f"Input too long ({token_count} tokens), truncating to 4000 tokens"
+            )
+            post = post[:4000]  # Approximate truncation
+
+        # Call LLM
+        logging.info("Requesting job post detection from LLM...")
         result = job_post_detection(post)
-        logging.info(f"**Response:**\n{result}")
-        # Add a small delay after each LLM call to prevent overloading
+
+        # Log result
+        if result is None:
+            logging.error("LLM returned None for job post detection")
+            return None
+
+        logging.info(f"Job post detection result: {result}")
+
+        # Add delay to prevent rate limiting
         time.sleep(1.5)
+
         return result
+
     except Exception as error:
-        logging.error(f"Error in job_post_detection: {error!s}", exc_info=True)
+        logging.error(f"Error in job post detection: {error!s}", exc_info=True)
         return None
 
 
-# Safe version of single job post detection
-def safe_single_job_detection(post):
+def safe_single_job_detection(post: str) -> bool | None:
+    """
+    Safely detect if a post contains exactly one job posting with proper error handling and logging.
+
+    Args:
+        post: Text to analyze
+
+    Returns:
+        Optional[bool]: True if exactly one job posting detected, False if not, None if error
+    """
     try:
+        # Validate input
+        if not post or not post.strip():
+            logging.warning("Empty post received for single job detection")
+            return None
+
+        # Count tokens and log input
         token_count = count_tokens(post)
-        logging.info(f"**Input (tokens: {token_count}):**\n{post[:128]}...")
-        logging.info("Request to single_job_post_detection...")
+        logging.info(f"Input tokens: {token_count}")
+
+        # Log first 256 chars for better context
+        preview = post[:256] + "..." if len(post) > 256 else post
+        logging.info(f"Input preview:\n{preview}")
+
+        # Check if input is too long
+        if token_count > 4000:  # GPT-4 context window is 8k, leave room for prompt
+            logging.warning(
+                f"Input too long ({token_count} tokens), truncating to 4000 tokens"
+            )
+            post = post[:4000]  # Approximate truncation
+
+        # Call LLM
+        logging.info("Requesting single job detection from LLM...")
         result = single_job_post_detection(post)
-        logging.info(f"**Response:**\n{result}")
-        # Add a small delay after each LLM call
+
+        # Log result
+        if result is None:
+            logging.error("LLM returned None for single job detection")
+            return None
+
+        logging.info(f"Single job detection result: {result}")
+
+        # Add delay to prevent rate limiting
         time.sleep(1.5)
+
         return result
+
     except Exception as error:
-        logging.error(f"Error in single_job_post_detection: {error!s}", exc_info=True)
+        logging.error(f"Error in single job detection: {error!s}", exc_info=True)
         return None
 
 
@@ -357,6 +421,41 @@ def process_batch(
         logging.info("⏳ Pausing for 3 seconds between processing steps")
         time.sleep(3)
 
+        # Step 4: Job Post Compression
+        logging.info("\nSTEP 4: Job Post Compression")
+        logging.info("-" * 40)
+        single_job_posts_df.loc[:, "compressed_post"] = single_job_posts_df[
+            "clean_post"
+        ].apply(rewrite_job_post)
+        compressed_posts_df = single_job_posts_df.loc[
+            single_job_posts_df["compressed_post"].notna()
+        ]
+
+        if compressed_posts_df.empty:
+            logging.info("❌ No posts could be compressed, skipping batch")
+            return None
+
+        # Calculate compression statistics
+        compressed_count = len(compressed_posts_df)
+        stats.posts_with_structured_data += compressed_count
+        stats.posts_without_structured_data += (
+            len(single_job_posts_df) - compressed_count
+        )
+
+        logging.info(
+            f"📊 Compression Results:\n"
+            f"  - Posts compressed: {compressed_count}\n"
+            f"  - Success rate: {(compressed_count/single_posts_count)*100:.1f}%"
+        )
+
+        # Add a delay between steps
+        logging.info("⏳ Pausing for 3 seconds between processing steps")
+        time.sleep(3)
+
+        # Step 5: Job Post Parsing
+        logging.info("\nSTEP 5: Job Post Parsing")
+        logging.info("-" * 40)
+
         def safe_job_parsing(post: str) -> str:
             """Clean and format job post text for structured storage.
 
@@ -390,23 +489,20 @@ def process_batch(
                 logging.error(f"Error in job_post_parsing: {error!s}", exc_info=True)
                 return json.dumps({"full_description": post})
 
-        logging.info("\nSTEP 4: Job Post Parsing")
-        logging.info("-" * 40)
-
-        # Apply parsing to all single job posts
-        single_job_posts_df.loc[:, "post_structured"] = single_job_posts_df[
-            "post"
+        # Apply parsing to all compressed posts
+        compressed_posts_df.loc[:, "post_structured"] = compressed_posts_df[
+            "compressed_post"
         ].apply(safe_job_parsing)
 
         # Log parsing results
-        parsed_count = len(single_job_posts_df)
+        parsed_count = len(compressed_posts_df)
         stats.posts_with_structured_data += parsed_count
-        stats.posts_without_structured_data += len(single_job_posts_df) - parsed_count
+        stats.posts_without_structured_data += len(compressed_posts_df) - parsed_count
 
         logging.info(
             f"📊 Parsing Results:\n"
             f"  - Posts parsed: {parsed_count}\n"
-            f"  - Success rate: {(parsed_count/single_posts_count)*100:.1f}%"
+            f"  - Success rate: {(parsed_count/compressed_count)*100:.1f}%"
         )
 
         # Add a delay between steps
@@ -415,8 +511,8 @@ def process_batch(
 
         ###
 
-        parsed_posts_df = single_job_posts_df.loc[
-            single_job_posts_df["post_structured"] != "{}"
+        parsed_posts_df = compressed_posts_df.loc[
+            compressed_posts_df["post_structured"] != "{}"
         ]
 
         if parsed_posts_df.empty:
@@ -425,7 +521,7 @@ def process_batch(
 
         # Calculate parsing statistics
         parsing_errors = parsed_posts_df["parsing_error"].sum()
-        valid_parsing = (single_job_posts_df["post_structured"] != "{}").sum()
+        valid_parsing = (compressed_posts_df["post_structured"] != "{}").sum()
         empty_parsing = initial_count - valid_parsing
 
         # Update stats
@@ -486,6 +582,14 @@ def clean_and_move_data():
         # Fetch and validate CV content
         cv_content = fetch_cv_content(CV_DOC_ID)
 
+        if not cv_content:
+            raise ValueError("CV content is empty")
+
+        cv_summary = summarize_cv_content(cv_content)
+
+        if not cv_summary:
+            raise ValueError("CV summary is empty")
+
         # Fetch raw data
         columns, data = fetch_from_db(
             RAW_DATA__TG_POSTS,
@@ -523,7 +627,7 @@ def clean_and_move_data():
 
                 processed_df = process_batch(
                     batch_df,
-                    str(cv_content),
+                    cv_summary,
                     batch_num,
                     total_batches,
                     stats,

@@ -16,9 +16,15 @@ import time
 from typing import Any, Literal, TypeVar
 
 import requests
+import tiktoken
 from pydantic import BaseModel, Field
 
-from _production import LLM_INSTANCE_URL
+from _production import (
+    CV_COMPRESSION_RATIO,
+    JOB_POST_COMPRESSION_RATIO,
+    LLM_INSTANCE_URL,
+    MIN_CV_LENGTH,
+)
 from _production.utils.custom_model import get_custom_model_client
 from _production.utils.exceptions import (
     LLMError,
@@ -31,6 +37,7 @@ from _production.utils.prompts import (
     CLEAN_JOB_POST_PROMPT,
     EXPERIENCE_MATCHING_PROMPT,
     JOB_POST_DETECTION_PROMPT,
+    JOB_POST_REWRITE_PROMPT,
     SINGLE_JOB_POST_DETECTION_PROMPT,
     SKILLS_MATCHING_PROMPT,
     SOFT_SKILLS_MATCHING_PROMPT,
@@ -44,6 +51,16 @@ MAX_TEXT_LENGTH = 64000
 logging.info("Using custom model client for LLM operations")
 CUSTOM_MODEL_CLIENT = get_custom_model_client()
 LLM_STRUCTURED_CLIENT = from_custom_model()
+
+
+def count_tokens(text: str) -> int:
+    """Count the number of tokens in a text using tiktoken."""
+    try:
+        encoding = tiktoken.get_encoding("cl100k_base")  # GPT-4 encoding
+        return len(encoding.encode(text))
+    except Exception as e:
+        logging.warning(f"Error counting tokens: {e!s}")
+        return len(text) // 4  # Fallback: rough estimate of 4 chars per token
 
 
 class CleanJobPost(BaseModel):
@@ -94,6 +111,28 @@ class CleanJobPost(BaseModel):
                     "salary_range": "€85K-120K",
                     "company_name": "TechCorp Solutions",
                     "skills": "Python, Django, FastAPI, PostgreSQL, Redis, Docker, Kubernetes",
+                }
+            ]
+        }
+    }
+
+
+class CVSummary(BaseModel):
+    """Structured representation of CV summary."""
+
+    summary: str = Field(
+        description="Concise summary of the CV while preserving technical details",
+        min_length=MIN_CV_LENGTH,
+    )
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "summary": "Senior Software Engineer with 7+ years of experience in Python development. "
+                    "Expertise in Django, FastAPI, and microservices architecture. "
+                    "Strong background in AWS, Docker, and Kubernetes. "
+                    "Team leadership experience managing 5-person teams."
                 }
             ]
         }
@@ -714,6 +753,130 @@ def generate_text(prompt: str, max_tokens: int = 1024, temperature: float = 0.0)
     except Exception as error:
         logging.error(f"Text generation failed: {error}")
         return ""
+
+
+def summarize_cv_content(cv_content: str) -> str | None:
+    """
+    Create a concise summary of the CV while preserving technical details.
+
+    Args:
+        cv_content: Raw CV content from Google Docs
+
+    Returns:
+        Optional[str]: Summarized CV content if successful, None if summarization fails
+    """
+    try:
+        # Calculate target tokens based on compression ratio
+        input_tokens = count_tokens(cv_content)
+        target_tokens = input_tokens // CV_COMPRESSION_RATIO
+
+        # Ensure minimum token count
+        max_tokens = max(
+            target_tokens, 256
+        )  # Minimum 256 tokens for meaningful summary
+
+        logging.info(
+            f"Input tokens: {input_tokens}, Target tokens: {target_tokens}, Max tokens: {max_tokens}"
+        )
+
+        # Prepare prompt for LLM
+        prompt = f"""Please create a concise summary of this CV while preserving all technical details and skills.
+        Target length should be approximately {len(cv_content) // CV_COMPRESSION_RATIO} characters.
+        Focus on:
+        1. Technical skills and expertise
+        2. Key professional achievements
+        3. Relevant work experience
+        4. Education and certifications
+
+        CV content:
+        {cv_content}
+        """
+
+        messages = [
+            {
+                "role": "system",
+                "content": "You are a professional CV analyzer. Create concise summaries while preserving technical details.",
+            },
+            {"role": "user", "content": prompt},
+        ]
+
+        # Call LLM using the structured approach
+        result = _make_llm_call(
+            messages=messages,
+            response_format=CVSummary,
+            max_retries=3,
+            sleep_time=10,
+            max_tokens=int(max_tokens * 1.25),
+            temperature=0.3,
+        )
+
+        if not result:
+            logging.error("Failed to generate CV summary")
+            return None
+
+        return result.summary
+
+    except Exception as error:
+        logging.error(f"CV summarization failed: {error!s}", exc_info=True)
+        return None
+
+
+def rewrite_job_post(post: str) -> str | None:
+    """
+    Rewrite a job posting to be clear and concise while preserving essential information.
+
+    Args:
+        post: Raw job posting text
+
+    Returns:
+        Optional[str]: Rewritten job posting if successful, None if rewriting fails
+    """
+    try:
+        # Calculate target tokens based on compression ratio
+        input_tokens = count_tokens(post)
+        target_tokens = input_tokens // JOB_POST_COMPRESSION_RATIO
+
+        # Ensure minimum token count
+        max_tokens = max(
+            target_tokens, 256
+        )  # Minimum 256 tokens for meaningful summary
+
+        logging.info(
+            f"Input tokens: {input_tokens}, Target tokens: {target_tokens}, Max tokens: {max_tokens}"
+        )
+
+        # Prepare prompt for LLM
+        prompt = f"""Please rewrite this job posting to be clear and concise while preserving all essential information.
+        Target length should be approximately {len(post) // JOB_POST_COMPRESSION_RATIO} characters.
+
+        Job posting:
+        {post}
+        """
+
+        messages = [
+            {"role": "system", "content": JOB_POST_REWRITE_PROMPT},
+            {"role": "user", "content": prompt},
+        ]
+
+        # Call LLM using the structured approach
+        result = _make_llm_call(
+            messages=messages,
+            response_format=CVSummary,  # Reuse CVSummary model as it has the right structure
+            max_retries=3,
+            sleep_time=10,
+            max_tokens=int(max_tokens * 1.25),
+            temperature=0.3,
+        )
+
+        if not result:
+            logging.error("Failed to rewrite job post")
+            return None
+
+        return result.summary
+
+    except Exception as error:
+        logging.error(f"Job post rewriting failed: {error!s}", exc_info=True)
+        return None
 
 
 if __name__ == "__main__":
