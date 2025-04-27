@@ -96,13 +96,14 @@ MATCH_SCORE_THRESHOLD: float = 2.0  # Value between 1.0-3.0
 LOOKBACK_DAYS = 30
 
 DATA_BATCH_SIZE = 8
-NUMBER_OF_BATCHES = 8
+NUMBER_OF_BATCHES = 1
 MAX_RETRY_ATTEMPTS = 3
 
 GDOCS_TIMEOUT_SECONDS = 8
 MIN_CV_LENGTH = 128
-CV_COMPRESSION_RATIO = 5  # Ratio for CV summarization
-JOB_POST_COMPRESSION_RATIO = 3  # Ratio for job post rewriting
+CV_COMPRESSION_RATIO = 2  # Ratio for CV summarization
+JOB_POST_COMPRESSION_RATIO = 2  # Ratio for job post rewriting
+MAX_CONTEXT_TOKENS = 8096 * 0.75  # Maximum tokens for input (leaving room for prompts)
 
 RAW_DATA__TG_POSTS = "raw_data.tg_posts"
 STAGING_DATA__POSTS = "staging_data.posts"

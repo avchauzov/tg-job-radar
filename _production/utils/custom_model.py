@@ -179,6 +179,20 @@ class StructuredModelClient(CustomModelClient):
                         logging.warning(
                             "Received error with partial JSON. Attempting to extract JSON from error message."
                         )
+                        try:
+                            # Try to parse the JSON from the error message
+                            extracted_json = json.loads(error_msg.strip())
+                            if (
+                                isinstance(extracted_json, dict)
+                                and "summary" in extracted_json
+                            ):
+                                logging.info(
+                                    "Successfully extracted JSON from error message"
+                                )
+                                return response_model.model_validate(extracted_json)
+                        except json.JSONDecodeError:
+                            logging.warning("Failed to parse JSON from error message")
+                            pass
 
                 # Parse the response into the requested model
                 return response_model.model_validate(data)

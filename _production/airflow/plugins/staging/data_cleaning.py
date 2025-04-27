@@ -23,6 +23,7 @@ from _production import (
     CV_DOC_ID,
     DATA_BATCH_SIZE,
     GDOCS_TIMEOUT_SECONDS,
+    MAX_CONTEXT_TOKENS,
     MIN_CV_LENGTH,
     NUMBER_OF_BATCHES,
     RAW_DATA__TG_POSTS,
@@ -222,11 +223,11 @@ def safe_job_post_detection(post: str) -> bool | None:
         logging.info(f"Input preview:\n{preview}")
 
         # Check if input is too long
-        if token_count > 4000:  # GPT-4 context window is 8k, leave room for prompt
+        if token_count > MAX_CONTEXT_TOKENS:
             logging.warning(
-                f"Input too long ({token_count} tokens), truncating to 4000 tokens"
+                f"Input too long ({token_count} tokens), truncating to {MAX_CONTEXT_TOKENS} tokens"
             )
-            post = post[:4000]  # Approximate truncation
+            post = post[: MAX_CONTEXT_TOKENS * 4]  # Approximate truncation
 
         # Call LLM
         logging.info("Requesting job post detection from LLM...")
@@ -274,11 +275,11 @@ def safe_single_job_detection(post: str) -> bool | None:
         logging.info(f"Input preview:\n{preview}")
 
         # Check if input is too long
-        if token_count > 4000:  # GPT-4 context window is 8k, leave room for prompt
+        if token_count > MAX_CONTEXT_TOKENS:
             logging.warning(
-                f"Input too long ({token_count} tokens), truncating to 4000 tokens"
+                f"Input too long ({token_count} tokens), truncating to {MAX_CONTEXT_TOKENS} tokens"
             )
-            post = post[:4000]  # Approximate truncation
+            post = post[: MAX_CONTEXT_TOKENS * 4]  # Approximate truncation
 
         # Call LLM
         logging.info("Requesting single job detection from LLM...")
@@ -585,10 +586,17 @@ def clean_and_move_data():
         if not cv_content:
             raise ValueError("CV content is empty")
 
-        cv_summary = summarize_cv_content(cv_content)
-
-        if not cv_summary:
-            raise ValueError("CV summary is empty")
+        try:
+            cv_summary = summarize_cv_content(cv_content)
+            if not cv_summary:
+                logging.warning(
+                    "CV summary is empty, falling back to original CV content"
+                )
+                cv_summary = cv_content
+        except Exception as e:
+            logging.error(f"Error summarizing CV content: {e!s}", exc_info=True)
+            logging.warning("Falling back to original CV content")
+            cv_summary = cv_content
 
         # Fetch raw data
         columns, data = fetch_from_db(

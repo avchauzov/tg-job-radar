@@ -23,6 +23,7 @@ from _production import (
     CV_COMPRESSION_RATIO,
     JOB_POST_COMPRESSION_RATIO,
     LLM_INSTANCE_URL,
+    MAX_CONTEXT_TOKENS,
     MIN_CV_LENGTH,
 )
 from _production.utils.custom_model import get_custom_model_client
@@ -165,7 +166,7 @@ def _make_llm_call(
     response_format: type[T],
     max_retries: int = 5,
     sleep_time: int = 10,
-    max_tokens: int = 512,
+    max_tokens: int = 1024,
     temperature: float = 0.0,
 ) -> T | None:
     """Make LLM API calls with retry logic.
@@ -203,6 +204,9 @@ def _make_llm_call(
     # Validate max_tokens
     if max_tokens <= 0:
         raise LLMInputError("max_tokens must be positive")
+    if max_tokens > 2048:  # Limit max_tokens to 2048 to stay within context window
+        max_tokens = 2048
+        logging.warning("max_tokens reduced to 2048 to stay within context window")
 
     start_time = time.time()
 
@@ -218,6 +222,16 @@ def _make_llm_call(
     system_tokens = len(system_message) // 4  # Approximate 4 chars per token
     user_tokens = len(user_message) // 4
     total_input_tokens = system_tokens + user_tokens
+
+    # Truncate input if it exceeds MAX_CONTEXT_TOKENS
+    if total_input_tokens > MAX_CONTEXT_TOKENS:
+        logging.warning(
+            f"Input too long ({total_input_tokens} tokens), truncating to {MAX_CONTEXT_TOKENS} tokens"
+        )
+        # Truncate user message to fit within context window
+        max_user_tokens = MAX_CONTEXT_TOKENS - system_tokens
+        user_message = user_message[: max_user_tokens * 4]  # Approximate truncation
+        total_input_tokens = system_tokens + max_user_tokens
 
     logging.info(f"Using character-based token estimation for {call_type}")
     logging.info(f"Total input size (estimated): {total_input_tokens} tokens")
@@ -768,7 +782,10 @@ def summarize_cv_content(cv_content: str) -> str | None:
     try:
         # Calculate target tokens based on compression ratio
         input_tokens = count_tokens(cv_content)
-        target_tokens = input_tokens // CV_COMPRESSION_RATIO
+        target_tokens = min(
+            input_tokens // CV_COMPRESSION_RATIO,
+            int(MAX_CONTEXT_TOKENS // 2),  # Leave room for prompt and response
+        )
 
         # Ensure minimum token count
         max_tokens = max(
@@ -806,7 +823,7 @@ def summarize_cv_content(cv_content: str) -> str | None:
             response_format=CVSummary,
             max_retries=3,
             sleep_time=10,
-            max_tokens=int(max_tokens * 1.25),
+            max_tokens=int(max_tokens),  # Ensure max_tokens is an integer
             temperature=0.3,
         )
 
