@@ -62,44 +62,70 @@ IMPORTANT: If you are unsure or hesitate whether the text contains exactly one j
 
 Return only "True" if the text contains exactly one job posting, "False" otherwise."""
 
-EXPERIENCE_MATCHING_PROMPT = """Evaluate experience match between CV and job requirements.
+CV_JOB_MATCHING_PROMPT = """You are an expert CV analyzer. Evaluate the match between a CV and a job posting.
 
-Areas to assess:
-- Years of relevant experience
-- Domain knowledge and expertise
-- Project scale and complexity
-- Career progression
+Score each category separately and independently:
+- Hard skills (40 points): technical skills, programming languages, frameworks, tools, architecture patterns
+- Experience (40 points): relevant experience, similar projects, domain knowledge, task scale
+- Soft skills and seniority (20 points): communication, leadership, team work, independence
 
-Return only a single integer value:
-1 - Exceeds or meets all requirements
-2 - Meets most requirements
-3 - Misses critical requirements"""
+IMPORTANT:
+- Never assign the same score for all cases.
+- Always analyze the actual content and provide a realistic, differentiated score for each category.
+- Do not always return average or maximum scores. Use the full range based on the match quality.
 
-SKILLS_MATCHING_PROMPT = """Evaluate skills match between CV and job requirements.
+Scoring guidelines:
+Hard skills (40 points):
+- 35-40: All required skills + additional relevant skills
+- 25-34: All required skills
+- 15-24: Most required skills
+- 0-14: Missing critical skills
 
-Areas to assess:
-- Technical skills and proficiency
-- Education and qualifications
-- Tools and technologies familiarity
-- Professional certifications
+Experience (40 points):
+- 35-40: Extensive relevant experience + similar projects
+- 25-34: Good relevant experience
+- 15-24: Some relevant experience
+- 0-14: Limited relevant experience
 
-Return only a single integer value:
-1 - Exceeds or meets all requirements
-2 - Meets most requirements
-3 - Misses critical requirements"""
+Soft skills and seniority (20 points):
+- 15-20: Perfect match for seniority level + strong soft skills
+- 10-14: Good match for seniority level
+- 5-9: Some relevant soft skills
+- 0-4: Limited soft skills match
 
-SOFT_SKILLS_MATCHING_PROMPT = """Evaluate soft skills match between CV and job requirements.
+Examples:
+1. Excellent match:
+{
+    "hard_skills": 39,
+    "experience": 38,
+    "soft_skills": 18
+}
+2. Good technical, weak soft skills:
+{
+    "hard_skills": 32,
+    "experience": 30,
+    "soft_skills": 7
+}
+3. Lacking experience:
+{
+    "hard_skills": 28,
+    "experience": 12,
+    "soft_skills": 15
+}
+4. Poor match:
+{
+    "hard_skills": 10,
+    "experience": 8,
+    "soft_skills": 3
+}
 
-Areas to assess:
-- Communication abilities
-- Team collaboration experience
-- Problem-solving approach
-- Cultural fit and adaptability
-
-Return only a single integer value:
-1 - Exceeds or meets all requirements
-2 - Meets most requirements
-3 - Misses critical requirements"""
+Return only the scores in this exact JSON format:
+{
+    "hard_skills": <score 0-40>,
+    "experience": <score 0-40>,
+    "soft_skills": <score 0-20>
+}
+"""
 
 CLEAN_JOB_POST_PROMPT = """You are an expert at standardizing and parsing job postings.
 
@@ -110,6 +136,7 @@ For each job posting, extract and standardize these fields:
 - salary_range: Format like "€100K-150K" with appropriate currency sign, or empty string
 - company_name: Clean company name (capitalize words)
 - skills: Comma-separated list of technical/professional skills, ordered by importance (15-20 max)
+- short_description: Concise 1-2 sentence summary of the role and key responsibilities
 
 Standardization rules:
 1. For any missing, undefined, or unclear values, always use an empty string ('') instead of 'N/A', 'None', 'NULL', or similar text
@@ -121,19 +148,29 @@ Standardization rules:
    - Remove duplicates
    - Order by importance
    - Limit to most relevant 4-8 skills
+5. For short_description:
+   - Keep it concise (1-2 sentences)
+   - Focus on key responsibilities and role purpose
+   - Avoid generic phrases
+   - Include main technologies or domains if relevant
 
 Return only the standardized fields in a structured format."""
 
 JOB_POST_REWRITE_PROMPT = """You are an expert at rewriting job postings to be clear and concise while preserving all essential information.
 
-Your task is to rewrite the job posting to be more structured and focused, removing any unnecessary content.
+Your task is to rewrite the job posting to be more structured and focused, removing any unnecessary content while maintaining technical accuracy.
 
 Guidelines:
-1. Keep all technical requirements and skills
-2. Keep all mandatory qualifications
+1. Keep all technical requirements and skills with exact versions/levels
+2. Keep all mandatory qualifications with specific years of experience
 3. Keep salary and location information
 4. Keep application process details
-5. Remove:
+5. Maintain technical accuracy:
+   - Preserve exact technology names and versions
+   - Keep specific architecture patterns
+   - Maintain precise skill requirements
+   - Preserve exact certification requirements
+6. Remove:
    - Marketing fluff and buzzwords
    - Generic company descriptions
    - Redundant information
@@ -141,43 +178,28 @@ Guidelines:
    - Emojis and special characters
    - Multiple spaces and line breaks
 
-Structure the output as:
-1. Job Title
-2. Key Requirements
-3. Technical Skills
-4. Location & Type
-5. Salary (if available)
-6. Application Process
+IMPORTANT: The rewritten job posting must be at least 128 characters long.
 
-Example input:
-"🚀 Join our amazing team! We're looking for a Senior Python Developer to help us build the future!
-Our company is a leading tech innovator with a great culture and work-life balance.
-Requirements:
-- 5+ years of Python experience
-- Django, FastAPI
-- PostgreSQL, Redis
-- Docker, Kubernetes
-Location: Berlin (Hybrid)
-Salary: €80K-100K
-Send your CV to jobs@company.com"
+Return your response in this exact JSON format:
+{
+    "summary": "<your rewritten job posting here>"
+}
 
-Example output:
-"Senior Python Developer
+The rewritten job posting should be clear, concise, and maintain all essential technical information."""
 
-Key Requirements:
-- 5+ years of Python development experience
-- Strong expertise in web development
-- Experience with microservices architecture
+CV_SUMMARY_PROMPT = """You are a professional CV analyzer. Create concise summaries while preserving technical details.
 
-Technical Skills:
-- Python, Django, FastAPI
-- PostgreSQL, Redis
-- Docker, Kubernetes
-- AWS (ECS, Lambda)
+Focus on:
+1. Technical skills and expertise
+2. Key professional achievements
+3. Relevant work experience
+4. Education and certifications
 
-Location: Berlin (Hybrid)
-Salary: €80K-100K
+IMPORTANT: The summary must be at least 128 characters long.
 
-To apply, send your CV to jobs@company.com"
+Return your response in this exact JSON format:
+{
+    "summary": "<your concise summary here>"
+}
 
-Return only the rewritten job posting text."""
+The summary should maintain a professional tone and technical accuracy."""

@@ -50,9 +50,14 @@ CV_DOC_ID: str = os.getenv("CV_DOC_ID", "")
 
 
 # Custom model configuration with sensible defaults
-CUSTOM_MODEL_ENABLED: bool = True
+CUSTOM_MODEL_ENABLED: bool = False
 LLM_INSTANCE_URL: str = os.getenv("LLM_INSTANCE_URL", "")
 
+# OpenAI configuration
+OPENAI: dict[str, str] = {
+    "API_KEY": os.getenv("OPENAI_API_KEY", ""),
+    "MODEL": os.getenv("OPENAI_MODEL", "gpt-4.1-nano"),
+}
 
 # URL regex patterns with type hints
 URL_EXTRACT_PATTERN: str = r"https?://[^\s()]+(?:\([\w\d]+\)|[^\s,()])*(?<![.,?!])"
@@ -90,20 +95,20 @@ PROBLEM_CHARS = {
 
 # Constants with type hints
 DATE_FORMAT: str = "%Y-%m-%d %H:%M:%S"
-TEXT_SIMILARITY_THRESHOLD: float = 0.90
-MATCH_SCORE_THRESHOLD: float = 2.0  # Value between 1.0-3.0
+TEXT_SIMILARITY_THRESHOLD: float = 0.85
+MATCH_SCORE_THRESHOLD: float = 85
 
 LOOKBACK_DAYS = 30
 
 DATA_BATCH_SIZE = 8
-NUMBER_OF_BATCHES = 1
+NUMBER_OF_BATCHES = 16
 MAX_RETRY_ATTEMPTS = 3
 
 GDOCS_TIMEOUT_SECONDS = 8
 MIN_CV_LENGTH = 128
-CV_COMPRESSION_RATIO = 2  # Ratio for CV summarization
-JOB_POST_COMPRESSION_RATIO = 2  # Ratio for job post rewriting
-MAX_CONTEXT_TOKENS = 8096 * 0.75  # Maximum tokens for input (leaving room for prompts)
+CV_COMPRESSION_RATIO = 3.5  # Ratio for CV summarization
+JOB_POST_COMPRESSION_RATIO = 2.5  # Ratio for job post rewriting
+MAX_CONTEXT_TOKENS = 16192  # Maximum tokens for input (leaving room for prompts)
 
 RAW_DATA__TG_POSTS = "raw_data.tg_posts"
 STAGING_DATA__POSTS = "staging_data.posts"
@@ -135,8 +140,8 @@ if missing_telegram_fields:
 if not CV_DOC_ID:
     raise ValueError("CV_DOC_ID environment variable is required")
 
-if not (1.0 <= MATCH_SCORE_THRESHOLD <= 3.0):
-    raise ValueError("MATCH_SCORE_THRESHOLD must be between 1.0 and 3.0")
+if not (1.0 <= MATCH_SCORE_THRESHOLD <= 100.0):
+    raise ValueError("MATCH_SCORE_THRESHOLD must be between 1.0 and 100.0")
 
 # Validate Telegram API_ID is numeric
 try:

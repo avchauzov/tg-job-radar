@@ -7,11 +7,12 @@ This module handles the ETL process from raw data to staging, including:
 
 import contextlib
 import datetime
+import functools
 import json
 import logging
 import multiprocessing
-import re
 import time
+import traceback
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -23,7 +24,7 @@ from _production import (
     CV_DOC_ID,
     DATA_BATCH_SIZE,
     GDOCS_TIMEOUT_SECONDS,
-    MAX_CONTEXT_TOKENS,
+    MATCH_SCORE_THRESHOLD,
     MIN_CV_LENGTH,
     NUMBER_OF_BATCHES,
     RAW_DATA__TG_POSTS,
@@ -36,14 +37,15 @@ from _production.config.config_db import (
 from _production.utils.common import setup_logging
 from _production.utils.influxdb import store_metrics
 from _production.utils.llm import (
-    count_tokens,
+    clean_job_post_values,
     job_post_detection,
+    job_post_parsing,
+    match_cv_with_job,
     rewrite_job_post,
     single_job_post_detection,
     summarize_cv_content,
 )
 from _production.utils.sql import batch_insert_to_db, fetch_from_db
-from _production.utils.text import extensive_clean_text
 
 setup_logging(__file__[:-3])
 
@@ -148,21 +150,28 @@ class CleaningStats:
         }
 
 
-def validate_cv_content(cv_content: str) -> bool:
-    """
-    Validate CV content meets minimum requirements.
+def llm_safe_call(default_return=None, input_preview=256):
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            try:
+                if args:
+                    preview = str(args[0])[:input_preview] + (
+                        "..." if len(str(args[0])) > input_preview else ""
+                    )
+                    logging.info(f"{func.__name__} input: {preview}")
+                result = func(*args, **kwargs)
+                logging.info(f"{func.__name__} output: {result}")
+                return result if result is not None else default_return
+            except Exception as error:
+                logging.error(
+                    f"Error in {func.__name__}: {error!s}\n{traceback.format_exc()}"
+                )
+                return default_return
 
-    Args:
-        cv_content: String content of the CV
-    Returns:
-        bool: True if valid, False otherwise
-    """
-    if not cv_content or len(cv_content.strip()) < MIN_CV_LENGTH:
-        logging.error(
-            f"CV content too short or empty. Length: {len(cv_content) if cv_content else 0}"
-        )
-        return False
-    return True
+        return wrapper
+
+    return decorator
 
 
 @retry(
@@ -172,14 +181,10 @@ def validate_cv_content(cv_content: str) -> bool:
         f"All retry attempts failed for CV fetch after {retry_state.attempt_number} attempts"
     ),
 )
-def fetch_cv_content(doc_id: str) -> str | None:
+@llm_safe_call(default_return=None)
+def safe_fetch_cv_content(doc_id: str) -> str | None:
     """
-    Fetch CV content from Google Docs with retry logic and timeout.
-
-    Args:
-        doc_id: Google Doc ID
-    Returns:
-        Optional[str]: CV content if successful, None if all retries fail
+    Fetch CV content from Google Docs with retry logic and timeout. Returns None if content is empty or too short.
     """
     try:
         response = requests.get(
@@ -188,118 +193,69 @@ def fetch_cv_content(doc_id: str) -> str | None:
         )
         response.raise_for_status()
         content = response.text
-
-        if not validate_cv_content(content):
-            raise ValueError("CV content validation failed")
-
+        if not content or len(content.strip()) < MIN_CV_LENGTH:
+            logging.error(
+                f"CV content too short or empty. Length: {len(content) if content else 0}"
+            )
+            return None
         return content
     except requests.RequestException as error:
         logging.debug(f"CV fetch failed: {error!s}", exc_info=True)
-        raise
+        return None
 
 
+@llm_safe_call(default_return=None)
+def safe_summarize_cv_content(cv_content: str) -> str | None:
+    return summarize_cv_content(cv_content)
+
+
+@llm_safe_call(default_return=None)
 def safe_job_post_detection(post: str) -> bool | None:
-    """
-    Safely detect if a post contains a job posting with proper error handling and logging.
-
-    Args:
-        post: Text to analyze
-
-    Returns:
-        Optional[bool]: True if job posting detected, False if not, None if error
-    """
-    try:
-        # Validate input
-        if not post or not post.strip():
-            logging.warning("Empty post received for job post detection")
-            return None
-
-        # Count tokens and log input
-        token_count = count_tokens(post)
-        logging.info(f"Input tokens: {token_count}")
-
-        # Log first 256 chars for better context
-        preview = post[:256] + "..." if len(post) > 256 else post
-        logging.info(f"Input preview:\n{preview}")
-
-        # Check if input is too long
-        if token_count > MAX_CONTEXT_TOKENS:
-            logging.warning(
-                f"Input too long ({token_count} tokens), truncating to {MAX_CONTEXT_TOKENS} tokens"
-            )
-            post = post[: MAX_CONTEXT_TOKENS * 4]  # Approximate truncation
-
-        # Call LLM
-        logging.info("Requesting job post detection from LLM...")
-        result = job_post_detection(post)
-
-        # Log result
-        if result is None:
-            logging.error("LLM returned None for job post detection")
-            return None
-
-        logging.info(f"Job post detection result: {result}")
-
-        # Add delay to prevent rate limiting
-        time.sleep(1.5)
-
-        return result
-
-    except Exception as error:
-        logging.error(f"Error in job post detection: {error!s}", exc_info=True)
-        return None
+    return job_post_detection(post)
 
 
+@llm_safe_call(default_return=None)
 def safe_single_job_detection(post: str) -> bool | None:
+    return single_job_post_detection(post)
+
+
+@llm_safe_call()
+def safe_rewrite_job_post(post: str) -> str:
+    result = rewrite_job_post(post)
+    return result if result is not None else post
+
+
+@llm_safe_call(default_return=None)
+def safe_match_cv_with_job(cv_text: str, post: str) -> float | None:
     """
-    Safely detect if a post contains exactly one job posting with proper error handling and logging.
+    Safely match CV with job post, logging input and output. (Demo stub)
+    """
+    return match_cv_with_job(cv_text, post)
+
+
+@llm_safe_call(default_return=None)
+def safe_job_parsing(post: str, compressed_post: str) -> str:
+    """
+    Safely parse a job post into structured data. Always returns a JSON string with at least {'description': compressed_post} on error.
 
     Args:
-        post: Text to analyze
-
+        post: The original job post text
+        compressed_post: The compressed (rewritten) job post text
     Returns:
-        Optional[bool]: True if exactly one job posting detected, False if not, None if error
+        str: JSON string of structured data, always with at least 'description'.
     """
-    try:
-        # Validate input
-        if not post or not post.strip():
-            logging.warning("Empty post received for single job detection")
-            return None
+    result = job_post_parsing(post, compressed_post)
+    return json.dumps(result)
 
-        # Count tokens and log input
-        token_count = count_tokens(post)
-        logging.info(f"Input tokens: {token_count}")
 
-        # Log first 256 chars for better context
-        preview = post[:256] + "..." if len(post) > 256 else post
-        logging.info(f"Input preview:\n{preview}")
-
-        # Check if input is too long
-        if token_count > MAX_CONTEXT_TOKENS:
-            logging.warning(
-                f"Input too long ({token_count} tokens), truncating to {MAX_CONTEXT_TOKENS} tokens"
-            )
-            post = post[: MAX_CONTEXT_TOKENS * 4]  # Approximate truncation
-
-        # Call LLM
-        logging.info("Requesting single job detection from LLM...")
-        result = single_job_post_detection(post)
-
-        # Log result
-        if result is None:
-            logging.error("LLM returned None for single job detection")
-            return None
-
-        logging.info(f"Single job detection result: {result}")
-
-        # Add delay to prevent rate limiting
-        time.sleep(1.5)
-
-        return result
-
-    except Exception as error:
-        logging.error(f"Error in single job detection: {error!s}", exc_info=True)
-        return None
+@llm_safe_call(default_return={})
+def safe_clean_job_post_values(
+    response: dict[str, Any], exclude_fields: list[str] | None = None
+) -> dict[str, Any]:
+    """
+    Safely clean job post values, logging input and output. (Demo stub)
+    """
+    return clean_job_post_values(response, exclude_fields=exclude_fields)
 
 
 def process_batch(
@@ -309,18 +265,7 @@ def process_batch(
     total_batches: int,
     stats: CleaningStats,
 ) -> pd.DataFrame | None:
-    """Process a batch of Telegram posts.
-
-    Args:
-        batch_df: DataFrame containing posts to process
-        cv_content: Content of the CV document
-        batch_num: Current batch number
-        total_batches: Total number of batches
-        stats: Statistics object
-
-    Returns:
-        DataFrame with processed job posts or None if processing fails
-    """
+    """Process a batch of Telegram posts with full LLM pipeline and detailed logging."""
     try:
         initial_count = len(batch_df)
         if initial_count == 0:
@@ -342,37 +287,22 @@ def process_batch(
         batch_df.loc[:, "parsing_error"] = False
         logging.info("✓ Initialized default values for all columns")
 
-        # Step 1: Extensive cleaning
-        logging.info("\nSTEP 1: Extensive Text Cleaning")
+        # Step 1: Job post detection
+        logging.info("\nSTEP 1: Job Post Detection")
         logging.info("-" * 40)
-        batch_df.loc[:, "clean_post"] = batch_df["post"].apply(extensive_clean_text)
-        batch_df = batch_df.loc[batch_df["clean_post"].notna()]
-
-        if batch_df.empty:
-            logging.info("❌ No valid posts found after cleaning, skipping batch")
-            return None
-
-        logging.info(f"✓ Cleaned {len(batch_df)} posts out of {initial_count}")
-
-        # Step 2: Job post detection
-        logging.info("\nSTEP 2: Job Post Detection")
-        logging.info("-" * 40)
-        batch_df.loc[:, "is_job_post"] = batch_df["clean_post"].apply(
-            safe_job_post_detection
-        )
+        batch_df.loc[:, "is_job_post"] = batch_df["post"].apply(safe_job_post_detection)
         job_posts_df = batch_df.loc[batch_df["is_job_post"]]
-
-        if job_posts_df.empty:
-            logging.info("❌ No job posts found, skipping batch")
-            return None
-
-        # Calculate job post detection statistics
         job_posts_count = len(job_posts_df)
         stats.job_posts += job_posts_count
-        true_count = job_posts_df["is_job_post"].sum()
+        true_count = batch_df["is_job_post"].sum()
         false_count = (batch_df["is_job_post"] == False).sum()
         none_count = batch_df["is_job_post"].isna().sum()
-
+        logging.info(
+            f"Job post detection input preview: {batch_df['post'].head(3).tolist()}"
+        )
+        logging.info(
+            f"Job post detection output preview: {batch_df['is_job_post'].head(3).tolist()}"
+        )
         logging.info(
             f"📊 Job Post Detection Results:\n"
             f"  - Total posts: {initial_count}\n"
@@ -383,30 +313,29 @@ def process_batch(
             f"    • False: {false_count} ({false_count/initial_count*100:.1f}%)\n"
             f"    • None: {none_count} ({none_count/initial_count*100:.1f}%)"
         )
-
-        # Add a delay between steps
-        logging.info("⏳ Pausing for 3 seconds between processing steps")
+        if job_posts_df.empty:
+            logging.info("❌ No job posts found, skipping batch")
+            return None
         time.sleep(3)
 
-        # Step 3: Single job post detection
-        logging.info("\nSTEP 3: Single Job Post Detection")
+        # Step 2: Single job post detection
+        logging.info("\nSTEP 2: Single Job Post Detection")
         logging.info("-" * 40)
-        job_posts_df.loc[:, "is_single_job_post"] = job_posts_df["clean_post"].apply(
+        job_posts_df.loc[:, "is_single_job_post"] = job_posts_df["post"].apply(
             safe_single_job_detection
         )
         single_job_posts_df = job_posts_df.loc[job_posts_df["is_single_job_post"]]
-
-        if single_job_posts_df.empty:
-            logging.info("❌ No single job posts found, skipping batch")
-            return None
-
-        # Calculate single job post detection statistics
         single_posts_count = len(single_job_posts_df)
         stats.single_job_posts += single_posts_count
-        true_count = single_job_posts_df["is_single_job_post"].sum()
+        true_count = job_posts_df["is_single_job_post"].sum()
         false_count = (job_posts_df["is_single_job_post"] == False).sum()
         none_count = job_posts_df["is_single_job_post"].isna().sum()
-
+        logging.info(
+            f"Single job detection input preview: {job_posts_df['post'].head(3).tolist()}"
+        )
+        logging.info(
+            f"Single job detection output preview: {job_posts_df['is_single_job_post'].head(3).tolist()}"
+        )
         logging.info(
             f"📊 Single Job Post Detection Results:\n"
             f"  - Job posts analyzed: {job_posts_count}\n"
@@ -417,140 +346,163 @@ def process_batch(
             f"    • False: {false_count} ({false_count/job_posts_count*100:.1f}%)\n"
             f"    • None: {none_count} ({none_count/job_posts_count*100:.1f}%)"
         )
-
-        # Add a delay between steps
-        logging.info("⏳ Pausing for 3 seconds between processing steps")
+        if single_job_posts_df.empty:
+            logging.info("❌ No single job posts found, skipping batch")
+            return None
         time.sleep(3)
 
-        # Step 4: Job Post Compression
-        logging.info("\nSTEP 4: Job Post Compression")
+        # Step 3: Job Post Compression (rewrite)
+        logging.info("\nSTEP 3: Job Post Compression (Rewrite)")
         logging.info("-" * 40)
         single_job_posts_df.loc[:, "compressed_post"] = single_job_posts_df[
-            "clean_post"
-        ].apply(rewrite_job_post)
+            "post"
+        ].apply(safe_rewrite_job_post)
         compressed_posts_df = single_job_posts_df.loc[
             single_job_posts_df["compressed_post"].notna()
         ]
-
+        compressed_count = len(compressed_posts_df)
+        rewritten_count = (
+            single_job_posts_df["compressed_post"] != single_job_posts_df["post"]
+        ).sum()
+        fallback_count = (
+            single_job_posts_df["compressed_post"] == single_job_posts_df["post"]
+        ).sum()
+        logging.info(
+            f"Rewrite input preview: {single_job_posts_df['post'].head(3).tolist()}"
+        )
+        logging.info(
+            f"Rewrite output preview: {single_job_posts_df['compressed_post'].head(3).tolist()}"
+        )
+        logging.info(
+            f"📊 Job Post Compression Results:\n"
+            f"  - Single job posts analyzed: {single_posts_count}\n"
+            f"  - Compressed posts: {compressed_count}\n"
+            f"  - Rewritten (LLM): {rewritten_count} ({(rewritten_count/single_posts_count)*100:.1f}%)\n"
+            f"  - Fallback (original): {fallback_count} ({(fallback_count/single_posts_count)*100:.1f}%)"
+        )
         if compressed_posts_df.empty:
             logging.info("❌ No posts could be compressed, skipping batch")
             return None
+        time.sleep(3)
 
-        # Calculate compression statistics
-        compressed_count = len(compressed_posts_df)
-        stats.posts_with_structured_data += compressed_count
-        stats.posts_without_structured_data += (
-            len(single_job_posts_df) - compressed_count
+        # Step 4: CV Matching (score)
+        logging.info("\nSTEP 4: CV Matching (Scoring)")
+        logging.info("-" * 40)
+        compressed_posts_df.loc[:, "score"] = compressed_posts_df[
+            "compressed_post"
+        ].apply(
+            lambda compressed_post: safe_match_cv_with_job(cv_content, compressed_post)
         )
-
+        filtered_df = compressed_posts_df.loc[
+            (compressed_posts_df["score"] == 0)
+            | (compressed_posts_df["score"] >= MATCH_SCORE_THRESHOLD)
+        ]
+        filtered_count = len(filtered_df)
+        scored_count = len(compressed_posts_df)
+        zero_count = (compressed_posts_df["score"] == 0).sum()
+        nonzero_count = (compressed_posts_df["score"] > 0).sum()
         logging.info(
-            f"📊 Compression Results:\n"
-            f"  - Posts compressed: {compressed_count}\n"
-            f"  - Success rate: {(compressed_count/single_posts_count)*100:.1f}%"
+            f"Score input preview: {compressed_posts_df['compressed_post'].head(3).tolist()}"
         )
-
-        # Add a delay between steps
-        logging.info("⏳ Pausing for 3 seconds between processing steps")
+        logging.info(
+            f"Score output preview: {compressed_posts_df['score'].head(3).tolist()}"
+        )
+        logging.info(
+            f"📊 CV Matching Results:\n"
+            f"  - Compressed posts analyzed: {compressed_count}\n"
+            f"  - Scored posts: {scored_count}\n"
+            f"  - Zero score (bad match): {zero_count} ({(zero_count/compressed_count)*100:.1f}%)\n"
+            f"  - Positive score: {nonzero_count} ({(nonzero_count/compressed_count)*100:.1f}%)\n"
+            f"  - Filtered posts after scoring: {filtered_count} / {scored_count}"
+        )
+        logging.info(f"Filtered posts after scoring: {filtered_count} / {scored_count}")
+        if filtered_df.empty:
+            logging.info("❌ No posts passed the score threshold, skipping batch")
+            return None
         time.sleep(3)
 
         # Step 5: Job Post Parsing
         logging.info("\nSTEP 5: Job Post Parsing")
         logging.info("-" * 40)
-
-        def safe_job_parsing(post: str) -> str:
-            """Clean and format job post text for structured storage.
-
-            Args:
-                post: Raw job post text
-
-            Returns:
-                JSON string containing cleaned post data
-            """
-            try:
-                token_count = count_tokens(post)
-                logging.info(f"Input: {post[:128]}... (tokens: {token_count})")
-                logging.info("Request to job_post_parsing...")
-
-                # Replace multiple spaces with single space
-                cleaned = re.sub(r"\s+", " ", post)
-                # Replace multiple newlines with single newline
-                cleaned = re.sub(r"\n+", "\n", cleaned)
-                # Cut to 1024 chars
-                cleaned = cleaned[:1024]
-
-                # Create structured data
-                structured_data = {
-                    "description": cleaned,
-                    "full_description": post,  # Keep original for reference
-                }
-
-                # Convert to JSON string
-                return json.dumps(structured_data)
-            except Exception as error:
-                logging.error(f"Error in job_post_parsing: {error!s}", exc_info=True)
-                return json.dumps({"full_description": post})
-
-        # Apply parsing to all compressed posts
-        compressed_posts_df.loc[:, "post_structured"] = compressed_posts_df[
-            "compressed_post"
-        ].apply(safe_job_parsing)
-
-        # Log parsing results
-        parsed_count = len(compressed_posts_df)
-        stats.posts_with_structured_data += parsed_count
-        stats.posts_without_structured_data += len(compressed_posts_df) - parsed_count
-
-        logging.info(
-            f"📊 Parsing Results:\n"
-            f"  - Posts parsed: {parsed_count}\n"
-            f"  - Success rate: {(parsed_count/compressed_count)*100:.1f}%"
+        filtered_df.loc[:, "post_structured"] = filtered_df.apply(
+            lambda row: safe_job_parsing(row["post"], row["compressed_post"]), axis=1
         )
 
-        # Add a delay between steps
-        logging.info("⏳ Pausing for 3 seconds between processing steps")
+        # Parse JSON and analyze structure
+        def is_fallback_structured(s):
+            try:
+                d = json.loads(s)
+                return set(d.keys()) == {"description"}
+            except Exception:
+                return True  # treat parse errors as fallback
+
+        def is_full_structured(s):
+            try:
+                d = json.loads(s)
+                return set(d.keys()) != {"description"}
+            except Exception:
+                return False
+
+        fallback_count = (
+            filtered_df["post_structured"].apply(is_fallback_structured).sum()
+        )
+        full_count = filtered_df["post_structured"].apply(is_full_structured).sum()
+        total_count = len(filtered_df)
+        logging.info(
+            f"Parsing input preview: {filtered_df['compressed_post'].head(3).tolist()}"
+        )
+        logging.info(
+            f"Parsing output preview: {filtered_df['post_structured'].head(3).tolist()}"
+        )
+        logging.info(
+            f"📊 Job Post Parsing Results:\n"
+            f"  - Compressed posts analyzed: {total_count}\n"
+            f"  - Fully structured posts: {full_count} ({(full_count/total_count)*100:.1f}%)\n"
+            f"  - Fallback (description-only): {fallback_count} ({(fallback_count/total_count)*100:.1f}%)\n"
+        )
         time.sleep(3)
 
-        ###
-
-        parsed_posts_df = compressed_posts_df.loc[
-            compressed_posts_df["post_structured"] != "{}"
-        ]
-
-        if parsed_posts_df.empty:
-            logging.info("❌ No single job posts found, skipping batch")
-            return None
-
-        # Calculate parsing statistics
-        parsing_errors = parsed_posts_df["parsing_error"].sum()
-        valid_parsing = (compressed_posts_df["post_structured"] != "{}").sum()
-        empty_parsing = initial_count - valid_parsing
-
-        # Update stats
-        stats.parsing_errors += parsing_errors
-        stats.valid_parsing += valid_parsing
-        stats.empty_parsing += empty_parsing
-
+        # Step 6: Clean Job Post Values
+        logging.info("\nSTEP 6: Clean Job Post Values")
+        logging.info("-" * 40)
+        filtered_df.loc[:, "post_structured_clean"] = filtered_df[
+            "post_structured"
+        ].apply(
+            lambda s: safe_clean_job_post_values(
+                json.loads(s), exclude_fields=["description"]
+            )
+        )
+        cleaned_count = (
+            filtered_df["post_structured_clean"].apply(lambda d: bool(d)).sum()
+        )
+        total_count = len(filtered_df)
         logging.info(
-            f"📝 Parsing results:\n"
-            f"  - Total posts: {initial_count}\n"
-            f"  - With parsing errors: {parsing_errors}\n"
-            f"  - Parsing results:\n"
-            f"    • Valid parsing: {valid_parsing} ({valid_parsing/initial_count*100:.1f}%)\n"
-            f"    • Empty results: {empty_parsing} ({empty_parsing/initial_count*100:.1f}%)"
+            f"Clean values input preview: {filtered_df['post_structured'].head(3).tolist()}"
+        )
+        logging.info(
+            f"Clean values output preview: {filtered_df['post_structured_clean'].head(3).tolist()}"
+        )
+        logging.info(
+            f"📊 Clean Job Post Values Results:\n"
+            f"  - Parsed posts analyzed: {total_count}\n"
+            f"  - Cleaned posts (all non-empty): {cleaned_count} ({(cleaned_count/total_count)*100:.1f}%)\n"
+        )
+        time.sleep(3)
+
+        filtered_df = filtered_df.drop(columns=["post_structured"]).rename(
+            columns={"post_structured_clean": "post_structured"}
         )
 
-        # Set timestamp and prepare final results
-        parsed_posts_df.loc[:, "created_at"] = pd.Timestamp(
+        # Serialize 'post_structured' column to JSON string for DB compatibility
+        if "post_structured" in filtered_df.columns:
+            filtered_df["post_structured"] = filtered_df["post_structured"].apply(
+                json.dumps
+            )
+
+        # Set timestamp
+        filtered_df.loc[:, "created_at"] = pd.Timestamp(
             datetime.datetime.now(datetime.UTC)
         ).tz_localize(None)
-
-        # Final results
-        final_df = parsed_posts_df.copy()
-        final_count = len(final_df)
-
-        if final_count == 0:
-            logging.info("No valid posts found in this batch after processing")
-            return None
 
         logging.info("\n" + "=" * 80)
         logging.info("🏁 FINAL RESULTS")
@@ -558,11 +510,11 @@ def process_batch(
         logging.info(
             f"Pipeline Summary:\n"
             f"  Initial posts: {initial_count}\n"
-            f"  Final valid posts: {final_count} ({(final_count/initial_count)*100:.1f}% of initial)"
+            f"  Final valid posts: {len(filtered_df)} ({(len(filtered_df)/initial_count)*100:.1f}% of initial)"
         )
         logging.info("=" * 80)
 
-        return final_df
+        return filtered_df
 
     except Exception as error:
         logging.error(f"❌ Error processing batch: {error!s}", exc_info=True)
@@ -581,21 +533,13 @@ def clean_and_move_data():
         start_time = time.time_ns()
 
         # Fetch and validate CV content
-        cv_content = fetch_cv_content(CV_DOC_ID)
-
+        cv_content = safe_fetch_cv_content(CV_DOC_ID)
         if not cv_content:
             raise ValueError("CV content is empty")
 
-        try:
-            cv_summary = summarize_cv_content(cv_content)
-            if not cv_summary:
-                logging.warning(
-                    "CV summary is empty, falling back to original CV content"
-                )
-                cv_summary = cv_content
-        except Exception as e:
-            logging.error(f"Error summarizing CV content: {e!s}", exc_info=True)
-            logging.warning("Falling back to original CV content")
+        cv_summary = safe_summarize_cv_content(cv_content)
+        if not cv_summary:
+            logging.warning("CV summary is empty, falling back to original CV content")
             cv_summary = cv_content
 
         # Fetch raw data

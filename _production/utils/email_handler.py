@@ -44,24 +44,13 @@ def format_email_content(df):
         formatted_fields = []
 
         # First try all fields except description and full_description
-        for field, display_name in field_order[
-            :-2
-        ]:  # Exclude description and full_description
+        for (
+            field,
+            display_name,
+        ) in field_order:  # Exclude description and full_description
             value = job_dict.get(field)
             if value is not None:  # Only append if there's a value
                 formatted_fields.append(f"<strong>{display_name}:</strong> {value}")
-
-        # If no fields were added, try description or full_description
-        if not formatted_fields:
-            description = job_dict.get("description")
-            full_description = job_dict.get("full_description")
-
-            if description is not None:
-                formatted_fields.append(f"<strong>Description:</strong> {description}")
-            elif full_description is not None:
-                formatted_fields.append(
-                    f"<strong>Description:</strong> {full_description}"
-                )
 
         if not formatted_fields:
             for key, value in job_dict.items():
