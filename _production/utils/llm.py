@@ -139,8 +139,25 @@ def _make_llm_call(
             if content is None:
                 raise LLMError("OpenAI API returned empty response")
 
+            # Handle boolean responses by wrapping them in a JSON object
+            if content.strip().lower() in ("true", "false"):
+                bool_value = content.strip().lower()  # Ensure lowercase true/false
+                if response_format.__name__ == "SingleJobPost":
+                    content = f'{{"is_single_post": {bool_value}}}'
+                else:
+                    content = f'{{"is_job_post": {bool_value}}}'
+
             # Parse the response into the requested model
-            result = response_format.model_validate_json(content)
+            try:
+                result = response_format.model_validate_json(content)
+            except Exception as e:
+                # If validation fails, try to fix common JSON formatting issues
+                if "true" in content.lower() or "false" in content.lower():
+                    # Replace Python boolean literals with JSON boolean literals
+                    content = content.replace("True", "true").replace("False", "false")
+                    result = response_format.model_validate_json(content)
+                else:
+                    raise e
 
             attempt_duration = time.time() - attempt_start
             logging.info(
@@ -517,7 +534,7 @@ def job_post_parsing(
 
         # Calculate tokens for structured data extraction
         input_tokens = count_tokens(post)
-        prompt_tokens = 512  # Increased from 256 to 512 for more detailed prompts
+        prompt_tokens = 1024  # Increased from 512 to 1024 for more detailed prompts
 
         # Calculate available tokens for response
         available_tokens = MAX_CONTEXT_TOKENS - prompt_tokens
@@ -525,12 +542,14 @@ def job_post_parsing(
         # For structured data extraction, we need fewer tokens than input
         # since we're extracting specific fields
         target_tokens = min(
-            input_tokens // 2, available_tokens
-        )  # Use half of input tokens
+            input_tokens, available_tokens
+        )  # Use full input tokens instead of half
 
         # Ensure minimum token count for structured data
-        min_tokens = 256  # Increased from 128 to 256 for more detailed responses
-        max_tokens = max(target_tokens, min_tokens)
+        min_tokens = 1024  # Increased from 256 to 1024 for more detailed responses
+        max_tokens = max(
+            target_tokens, min_tokens, 4096
+        )  # Added 4096 as minimum max_tokens
 
         logging.info(
             f"Token calculation - Input: {input_tokens}, Target: {target_tokens}, "
