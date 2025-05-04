@@ -680,7 +680,7 @@ def clean_job_post_values(
             response_format=CleanJobPost,
             max_retries=3,
             sleep_time=1,
-            max_tokens=512,  # Increased from default to 512 for more detailed cleaning
+            max_tokens=4096,  # Increased from 512 to 4096 for larger inputs
             temperature=0.0,  # Deterministic output
         )
         if not result:
