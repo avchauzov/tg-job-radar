@@ -68,87 +68,6 @@ class CleaningStats:
     execution_time_ms: float = 0.0
     server_errors: int = 0  # Track server errors
 
-    def to_dict(self) -> dict[str, Any]:
-        """Convert stats to a dictionary for metrics storage."""
-        if not self.scores:
-            return {
-                "total_posts": self.total_posts,
-                "job_posts_rate": 0.0,
-                "single_job_posts_rate": 0.0,
-                "above_threshold_rate": 0.0,
-                "below_threshold_rate": 0.0,
-                "structured_data_rate": 0.0,
-                "parsing_error_rate": 0.0,
-                "valid_parsing_rate": 0.0,
-                "empty_parsing_rate": 0.0,
-                "score_mean": 0.0,
-                "score_std": 0.0,
-                "execution_time_ms": self.execution_time_ms,
-                "server_errors": self.server_errors,
-            }
-
-        # Calculate rates
-        job_posts_rate = (
-            (self.job_posts / self.total_posts * 100) if self.total_posts > 0 else 0.0
-        )
-        single_job_posts_rate = (
-            (self.single_job_posts / self.job_posts * 100)
-            if self.job_posts > 0
-            else 0.0
-        )
-        above_threshold_rate = (
-            (self.posts_above_threshold / self.single_job_posts * 100)
-            if self.single_job_posts > 0
-            else 0.0
-        )
-        below_threshold_rate = (
-            (self.posts_below_threshold / self.single_job_posts * 100)
-            if self.single_job_posts > 0
-            else 0.0
-        )
-        structured_data_rate = (
-            (self.posts_with_structured_data / self.posts_above_threshold * 100)
-            if self.posts_above_threshold > 0
-            else 0.0
-        )
-        parsing_error_rate = (
-            (self.parsing_errors / self.total_posts * 100)
-            if self.total_posts > 0
-            else 0.0
-        )
-        valid_parsing_rate = (
-            (self.valid_parsing / self.total_posts * 100)
-            if self.total_posts > 0
-            else 0.0
-        )
-        empty_parsing_rate = (
-            (self.empty_parsing / self.total_posts * 100)
-            if self.total_posts > 0
-            else 0.0
-        )
-
-        # Calculate score statistics
-        score_mean = sum(self.scores) / len(self.scores)
-        score_std = (
-            sum((x - score_mean) ** 2 for x in self.scores) / len(self.scores)
-        ) ** 0.5
-
-        return {
-            "total_posts": int(self.total_posts),
-            "job_posts_rate": float(job_posts_rate),
-            "single_job_posts_rate": float(single_job_posts_rate),
-            "above_threshold_rate": float(above_threshold_rate),
-            "below_threshold_rate": float(below_threshold_rate),
-            "structured_data_rate": float(structured_data_rate),
-            "parsing_error_rate": float(parsing_error_rate),
-            "valid_parsing_rate": float(valid_parsing_rate),
-            "empty_parsing_rate": float(empty_parsing_rate),
-            "score_mean": float(score_mean),
-            "score_std": float(score_std),
-            "execution_time_ms": float(self.execution_time_ms),
-            "server_errors": self.server_errors,
-        }
-
 
 def llm_safe_call(default_return=None, input_preview=256):
     def decorator(func):
@@ -632,10 +551,89 @@ def clean_and_move_data():
         # Calculate execution time
         stats.execution_time_ms = float((time.time_ns() - start_time) / 1_000_000)
 
-        # Store metrics in InfluxDB
+        # Store final metrics in InfluxDB
         store_metrics(
             measurement="tg-job-radar__data_cleaning__stats",
-            fields=stats.to_dict(),
+            fields={
+                "total_posts": float(stats.total_posts),
+                "job_posts": float(stats.job_posts),
+                "single_job_posts": float(stats.single_job_posts),
+                "posts_above_threshold": float(stats.posts_above_threshold),
+                "posts_below_threshold": float(stats.posts_below_threshold),
+                "posts_with_structured_data": float(stats.posts_with_structured_data),
+                "posts_without_structured_data": float(
+                    stats.posts_without_structured_data
+                ),
+                "parsing_errors": float(stats.parsing_errors),
+                "valid_parsing": float(stats.valid_parsing),
+                "empty_parsing": float(stats.empty_parsing),
+                "server_errors": float(stats.server_errors),
+                "total_scores": float(len(stats.scores)),
+                "job_posts_rate": float(
+                    (stats.job_posts / stats.total_posts * 100)
+                    if stats.total_posts > 0
+                    else 0.0
+                ),
+                "single_job_posts_rate": float(
+                    (stats.single_job_posts / stats.job_posts * 100)
+                    if stats.job_posts > 0
+                    else 0.0
+                ),
+                "above_threshold_rate": float(
+                    (stats.posts_above_threshold / stats.single_job_posts * 100)
+                    if stats.single_job_posts > 0
+                    else 0.0
+                ),
+                "below_threshold_rate": float(
+                    (stats.posts_below_threshold / stats.single_job_posts * 100)
+                    if stats.single_job_posts > 0
+                    else 0.0
+                ),
+                "structured_data_rate": float(
+                    (
+                        stats.posts_with_structured_data
+                        / stats.posts_above_threshold
+                        * 100
+                    )
+                    if stats.posts_above_threshold > 0
+                    else 0.0
+                ),
+                "parsing_error_rate": float(
+                    (stats.parsing_errors / stats.total_posts * 100)
+                    if stats.total_posts > 0
+                    else 0.0
+                ),
+                "valid_parsing_rate": float(
+                    (stats.valid_parsing / stats.total_posts * 100)
+                    if stats.total_posts > 0
+                    else 0.0
+                ),
+                "empty_parsing_rate": float(
+                    (stats.empty_parsing / stats.total_posts * 100)
+                    if stats.total_posts > 0
+                    else 0.0
+                ),
+                "score_mean": (
+                    float(sum(stats.scores) / len(stats.scores))
+                    if stats.scores
+                    else 0.0
+                ),
+                "score_std": (
+                    float(
+                        (
+                            sum(
+                                (x - (sum(stats.scores) / len(stats.scores))) ** 2
+                                for x in stats.scores
+                            )
+                            / len(stats.scores)
+                        )
+                        ** 0.5
+                    )
+                    if stats.scores
+                    else 0.0
+                ),
+                "execution_time_ms": float(stats.execution_time_ms),
+            },
             tags={
                 "environment": "production",
                 "script": "data_cleaning",
