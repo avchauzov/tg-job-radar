@@ -62,70 +62,6 @@ IMPORTANT: If you are unsure or hesitate whether the text contains exactly one j
 
 Return only "True" if the text contains exactly one job posting, "False" otherwise."""
 
-CV_JOB_MATCHING_PROMPT = """You are an expert CV analyzer. Evaluate the match between a CV and a job posting.
-
-Score each category separately and independently:
-- Hard skills (40 points): technical skills, programming languages, frameworks, tools, architecture patterns
-- Experience (40 points): relevant experience, similar projects, domain knowledge, task scale
-- Soft skills and seniority (20 points): communication, leadership, team work, independence
-
-IMPORTANT:
-- Never assign the same score for all cases.
-- Always analyze the actual content and provide a realistic, differentiated score for each category.
-- Do not always return average or maximum scores. Use the full range based on the match quality.
-
-Scoring guidelines:
-Hard skills (40 points):
-- 35-40: All required skills + additional relevant skills
-- 25-34: All required skills
-- 15-24: Most required skills
-- 0-14: Missing critical skills
-
-Experience (40 points):
-- 35-40: Extensive relevant experience + similar projects
-- 25-34: Good relevant experience
-- 15-24: Some relevant experience
-- 0-14: Limited relevant experience
-
-Soft skills and seniority (20 points):
-- 15-20: Perfect match for seniority level + strong soft skills
-- 10-14: Good match for seniority level
-- 5-9: Some relevant soft skills
-- 0-4: Limited soft skills match
-
-Examples:
-1. Excellent match:
-{
-    "hard_skills": 39,
-    "experience": 38,
-    "soft_skills": 18
-}
-2. Good technical, weak soft skills:
-{
-    "hard_skills": 32,
-    "experience": 30,
-    "soft_skills": 7
-}
-3. Lacking experience:
-{
-    "hard_skills": 28,
-    "experience": 12,
-    "soft_skills": 15
-}
-4. Poor match:
-{
-    "hard_skills": 10,
-    "experience": 8,
-    "soft_skills": 3
-}
-
-Return only the scores in this exact JSON format:
-{
-    "hard_skills": <score 0-40>,
-    "experience": <score 0-40>,
-    "soft_skills": <score 0-20>
-}
-"""
 
 CLEAN_JOB_POST_PROMPT = """You are an expert at standardizing and parsing job postings.
 
@@ -203,3 +139,47 @@ Return your response in this exact JSON format:
 }
 
 The summary should maintain a professional tone and technical accuracy."""
+
+CV_JOB_MATCHING_PROMPT = """You are an experienced recruiter or hiring manager with over 10 years in technical hiring. Your task is to evaluate how well a candidate's CV matches a job posting, being critical and thorough in your assessment.
+
+CRITICAL REQUIREMENTS:
+1. You must respond with a JSON object containing exactly these fields:
+   - job_title_match (0-20 points)
+   - experience_match (0-25 points)
+   - hard_skills_match (0-25 points)
+   - soft_skills_match (0-15 points)
+   - location_match (0-15 points)
+   - total_score (sum of all scores, must equal 100)
+
+2. Be extremely critical in your evaluation:
+   - Require clear evidence of claimed skills
+   - Don't give points for vague claims
+   - Focus on concrete achievements and specific technologies
+   - Consider only directly relevant experience
+   - Location match must be exact or very close
+
+3. Scoring criteria:
+   - Job Title (20 points): Exact match or very close variation
+   - Experience (25 points): Years and type of experience must align
+   - Hard Skills (25 points): Technical skills and tools must match
+   - Soft Skills (15 points): Leadership, communication, etc.
+   - Location (15 points): Must match job location requirements
+
+4. Total score must be the sum of individual scores.
+
+Example response format:
+{
+    "job_title_match": 15,
+    "experience_match": 20,
+    "hard_skills_match": 25,
+    "soft_skills_match": 10,
+    "location_match": 15,
+    "total_score": 85
+}
+
+Remember:
+- Be critical and thorough
+- Require concrete evidence
+- No points for vague claims
+- Total must equal 100
+- All scores must be integers"""

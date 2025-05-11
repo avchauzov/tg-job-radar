@@ -38,6 +38,7 @@ from _production.utils.common import setup_logging
 from _production.utils.influxdb import store_metrics
 from _production.utils.llm import (
     clean_job_post_values,
+    detailed_match_cv_with_job,
     job_post_detection,
     job_post_parsing,
     match_cv_with_job,
@@ -48,6 +49,22 @@ from _production.utils.llm import (
 from _production.utils.sql import batch_insert_to_db, fetch_from_db
 
 setup_logging(__file__[:-3])
+
+
+def truncate_log_message(message: str, max_length: int = 128) -> str:
+    """
+    Truncate a log message to the specified maximum length.
+
+    Args:
+        message: The message to truncate
+        max_length: Maximum length of the message (default: 128)
+
+    Returns:
+        str: Truncated message with ellipsis if needed
+    """
+    if len(message) <= max_length:
+        return message
+    return message[: max_length - 3] + "..."
 
 
 @dataclass
@@ -67,25 +84,32 @@ class CleaningStats:
     scores: list[float] = field(default_factory=list)
     execution_time_ms: float = 0.0
     server_errors: int = 0  # Track server errors
+    detailed_scores: dict[str, list[int]] = field(
+        default_factory=lambda: {
+            "job_title": [],
+            "experience": [],
+            "hard_skills": [],
+            "soft_skills": [],
+            "location": [],
+        }
+    )
 
 
-def llm_safe_call(default_return=None, input_preview=256):
+def llm_safe_call(default_return=None, input_preview=128):
     def decorator(func):
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
             try:
                 if args:
-                    preview = str(args[0])[:input_preview] + (
-                        "..." if len(str(args[0])) > input_preview else ""
-                    )
+                    preview = truncate_log_message(str(args[0]))
                     logging.info(f"{func.__name__} input: {preview}")
                 result = func(*args, **kwargs)
-                logging.info(f"{func.__name__} output: {result}")
+                result_preview = truncate_log_message(str(result))
+                logging.info(f"{func.__name__} output: {result_preview}")
                 return result if result is not None else default_return
             except Exception as error:
-                logging.error(
-                    f"Error in {func.__name__}: {error!s}\n{traceback.format_exc()}"
-                )
+                error_msg = truncate_log_message(f"Error in {func.__name__}: {error!s}")
+                logging.error(f"{error_msg}\n{traceback.format_exc()}")
                 return default_return
 
         return wrapper
@@ -194,7 +218,9 @@ def process_batch(
         stats.total_posts += initial_count
         logging.info("=" * 80)
         logging.info(
-            f"🔄 BATCH {batch_num}/{total_batches} PROCESSING: Starting with {initial_count} posts"
+            truncate_log_message(
+                f"🔄 BATCH {batch_num}/{total_batches} PROCESSING: Starting with {initial_count} posts"
+            )
         )
         logging.info("=" * 80)
 
@@ -202,6 +228,7 @@ def process_batch(
         batch_df.loc[:, "is_job_post"] = None
         batch_df.loc[:, "is_single_job_post"] = None
         batch_df.loc[:, "score"] = None
+        batch_df.loc[:, "detailed_scores"] = None
         batch_df.loc[:, "post_structured"] = "{}"
         batch_df.loc[:, "parsing_error"] = False
         logging.info("✓ Initialized default values for all columns")
@@ -216,13 +243,15 @@ def process_batch(
         true_count = batch_df["is_job_post"].sum()
         false_count = (batch_df["is_job_post"] == False).sum()
         none_count = batch_df["is_job_post"].isna().sum()
-        logging.info(
-            f"Job post detection input preview: {batch_df['post'].head(3).tolist()}"
+
+        input_preview = truncate_log_message(str(batch_df["post"].head(3).tolist()))
+        output_preview = truncate_log_message(
+            str(batch_df["is_job_post"].head(3).tolist())
         )
-        logging.info(
-            f"Job post detection output preview: {batch_df['is_job_post'].head(3).tolist()}"
-        )
-        logging.info(
+        logging.info(f"Job post detection input preview: {input_preview}")
+        logging.info(f"Job post detection output preview: {output_preview}")
+
+        stats_msg = truncate_log_message(
             f"📊 Job Post Detection Results:\n"
             f"  - Total posts: {initial_count}\n"
             f"  - Job posts found: {job_posts_count}\n"
@@ -232,6 +261,8 @@ def process_batch(
             f"    • False: {false_count} ({false_count/initial_count*100:.1f}%)\n"
             f"    • None: {none_count} ({none_count/initial_count*100:.1f}%)"
         )
+        logging.info(stats_msg)
+
         if job_posts_df.empty:
             logging.info("❌ No job posts found, skipping batch")
             return None
@@ -249,13 +280,15 @@ def process_batch(
         true_count = job_posts_df["is_single_job_post"].sum()
         false_count = (job_posts_df["is_single_job_post"] == False).sum()
         none_count = job_posts_df["is_single_job_post"].isna().sum()
-        logging.info(
-            f"Single job detection input preview: {job_posts_df['post'].head(3).tolist()}"
+
+        input_preview = truncate_log_message(str(job_posts_df["post"].head(3).tolist()))
+        output_preview = truncate_log_message(
+            str(job_posts_df["is_single_job_post"].head(3).tolist())
         )
-        logging.info(
-            f"Single job detection output preview: {job_posts_df['is_single_job_post'].head(3).tolist()}"
-        )
-        logging.info(
+        logging.info(f"Single job detection input preview: {input_preview}")
+        logging.info(f"Single job detection output preview: {output_preview}")
+
+        stats_msg = truncate_log_message(
             f"📊 Single Job Post Detection Results:\n"
             f"  - Job posts analyzed: {job_posts_count}\n"
             f"  - Single posts found: {single_posts_count}\n"
@@ -265,6 +298,8 @@ def process_batch(
             f"    • False: {false_count} ({false_count/job_posts_count*100:.1f}%)\n"
             f"    • None: {none_count} ({none_count/job_posts_count*100:.1f}%)"
         )
+        logging.info(stats_msg)
+
         if single_job_posts_df.empty:
             logging.info("❌ No single job posts found, skipping batch")
             return None
@@ -286,32 +321,71 @@ def process_batch(
         fallback_count = (
             single_job_posts_df["compressed_post"] == single_job_posts_df["post"]
         ).sum()
-        logging.info(
-            f"Rewrite input preview: {single_job_posts_df['post'].head(3).tolist()}"
+
+        input_preview = truncate_log_message(
+            str(single_job_posts_df["post"].head(3).tolist())
         )
-        logging.info(
-            f"Rewrite output preview: {single_job_posts_df['compressed_post'].head(3).tolist()}"
+        output_preview = truncate_log_message(
+            str(single_job_posts_df["compressed_post"].head(3).tolist())
         )
-        logging.info(
+        logging.info(f"Rewrite input preview: {input_preview}")
+        logging.info(f"Rewrite output preview: {output_preview}")
+
+        stats_msg = truncate_log_message(
             f"📊 Job Post Compression Results:\n"
             f"  - Single job posts analyzed: {single_posts_count}\n"
             f"  - Compressed posts: {compressed_count}\n"
             f"  - Rewritten (LLM): {rewritten_count} ({(rewritten_count/single_posts_count)*100:.1f}%)\n"
             f"  - Fallback (original): {fallback_count} ({(fallback_count/single_posts_count)*100:.1f}%)"
         )
+        logging.info(stats_msg)
+
         if compressed_posts_df.empty:
             logging.info("❌ No posts could be compressed, skipping batch")
             return None
         time.sleep(3)
 
-        # Step 4: CV Matching (score)
-        logging.info("\nSTEP 4: CV Matching (Scoring)")
+        # Step 4: Detailed CV Matching
+        logging.info("\nSTEP 4: Detailed CV Matching")
         logging.info("-" * 40)
-        compressed_posts_df.loc[:, "score"] = compressed_posts_df[
-            "compressed_post"
-        ].apply(
-            lambda compressed_post: safe_match_cv_with_job(cv_content, compressed_post)
+
+        def process_detailed_match(
+            compressed_post: str,
+        ) -> tuple[float, dict[str, Any]]:
+            """Process detailed match and return both total score and detailed scores."""
+            match_result = detailed_match_cv_with_job(cv_content, compressed_post)
+            if match_result:
+                # Store detailed scores in stats
+                stats.detailed_scores["job_title"].append(match_result.job_title_match)
+                stats.detailed_scores["experience"].append(
+                    match_result.experience_match
+                )
+                stats.detailed_scores["hard_skills"].append(
+                    match_result.hard_skills_match
+                )
+                stats.detailed_scores["soft_skills"].append(
+                    match_result.soft_skills_match
+                )
+                stats.detailed_scores["location"].append(match_result.location_match)
+
+                return match_result.total_score, {
+                    "job_title_match": match_result.job_title_match,
+                    "experience_match": match_result.experience_match,
+                    "hard_skills_match": match_result.hard_skills_match,
+                    "soft_skills_match": match_result.soft_skills_match,
+                    "location_match": match_result.location_match,
+                }
+            return 0.0, {}
+
+        # Apply detailed matching
+        (
+            compressed_posts_df.loc[:, "score"],
+            compressed_posts_df.loc[:, "detailed_scores"],
+        ) = zip(
+            *compressed_posts_df["compressed_post"].apply(process_detailed_match),
+            strict=False,
         )
+
         filtered_df = compressed_posts_df.loc[
             (compressed_posts_df["score"] == 0)
             | (compressed_posts_df["score"] >= MATCH_SCORE_THRESHOLD)
@@ -320,21 +394,26 @@ def process_batch(
         scored_count = len(compressed_posts_df)
         zero_count = (compressed_posts_df["score"] == 0).sum()
         nonzero_count = (compressed_posts_df["score"] > 0).sum()
-        logging.info(
-            f"Score input preview: {compressed_posts_df['compressed_post'].head(3).tolist()}"
+
+        input_preview = truncate_log_message(
+            str(compressed_posts_df["compressed_post"].head(3).tolist())
         )
-        logging.info(
-            f"Score output preview: {compressed_posts_df['score'].head(3).tolist()}"
+        output_preview = truncate_log_message(
+            str(compressed_posts_df["score"].head(3).tolist())
         )
-        logging.info(
-            f"📊 CV Matching Results:\n"
+        logging.info(f"Score input preview: {input_preview}")
+        logging.info(f"Score output preview: {output_preview}")
+
+        stats_msg = truncate_log_message(
+            f"📊 Detailed CV Matching Results:\n"
             f"  - Compressed posts analyzed: {compressed_count}\n"
             f"  - Scored posts: {scored_count}\n"
             f"  - Zero score (bad match): {zero_count} ({(zero_count/compressed_count)*100:.1f}%)\n"
             f"  - Positive score: {nonzero_count} ({(nonzero_count/compressed_count)*100:.1f}%)\n"
             f"  - Filtered posts after scoring: {filtered_count} / {scored_count}"
         )
-        logging.info(f"Filtered posts after scoring: {filtered_count} / {scored_count}")
+        logging.info(stats_msg)
+
         if filtered_df.empty:
             logging.info("❌ No posts passed the score threshold, skipping batch")
             return None
@@ -367,18 +446,23 @@ def process_batch(
         )
         full_count = filtered_df["post_structured"].apply(is_full_structured).sum()
         total_count = len(filtered_df)
-        logging.info(
-            f"Parsing input preview: {filtered_df['compressed_post'].head(3).tolist()}"
+
+        input_preview = truncate_log_message(
+            str(filtered_df["compressed_post"].head(3).tolist())
         )
-        logging.info(
-            f"Parsing output preview: {filtered_df['post_structured'].head(3).tolist()}"
+        output_preview = truncate_log_message(
+            str(filtered_df["post_structured"].head(3).tolist())
         )
-        logging.info(
+        logging.info(f"Parsing input preview: {input_preview}")
+        logging.info(f"Parsing output preview: {output_preview}")
+
+        stats_msg = truncate_log_message(
             f"📊 Job Post Parsing Results:\n"
             f"  - Compressed posts analyzed: {total_count}\n"
             f"  - Fully structured posts: {full_count} ({(full_count/total_count)*100:.1f}%)\n"
             f"  - Fallback (description-only): {fallback_count} ({(fallback_count/total_count)*100:.1f}%)\n"
         )
+        logging.info(stats_msg)
         time.sleep(3)
 
         # Step 6: Clean Job Post Values
@@ -395,26 +479,35 @@ def process_batch(
             filtered_df["post_structured_clean"].apply(lambda d: bool(d)).sum()
         )
         total_count = len(filtered_df)
-        logging.info(
-            f"Clean values input preview: {filtered_df['post_structured'].head(3).tolist()}"
+
+        input_preview = truncate_log_message(
+            str(filtered_df["post_structured"].head(3).tolist())
         )
-        logging.info(
-            f"Clean values output preview: {filtered_df['post_structured_clean'].head(3).tolist()}"
+        output_preview = truncate_log_message(
+            str(filtered_df["post_structured_clean"].head(3).tolist())
         )
-        logging.info(
+        logging.info(f"Clean values input preview: {input_preview}")
+        logging.info(f"Clean values output preview: {output_preview}")
+
+        stats_msg = truncate_log_message(
             f"📊 Clean Job Post Values Results:\n"
             f"  - Parsed posts analyzed: {total_count}\n"
             f"  - Cleaned posts (all non-empty): {cleaned_count} ({(cleaned_count/total_count)*100:.1f}%)\n"
         )
+        logging.info(stats_msg)
         time.sleep(3)
 
         filtered_df = filtered_df.drop(columns=["post_structured"]).rename(
             columns={"post_structured_clean": "post_structured"}
         )
 
-        # Serialize 'post_structured' column to JSON string for DB compatibility
+        # Serialize 'post_structured' and 'detailed_scores' columns to JSON string for DB compatibility
         if "post_structured" in filtered_df.columns:
             filtered_df["post_structured"] = filtered_df["post_structured"].apply(
+                json.dumps
+            )
+        if "detailed_scores" in filtered_df.columns:
+            filtered_df["detailed_scores"] = filtered_df["detailed_scores"].apply(
                 json.dumps
             )
 
@@ -476,9 +569,10 @@ def clean_and_move_data():
             return
 
         total_batches = (len(df) + DATA_BATCH_SIZE - 1) // DATA_BATCH_SIZE
-        logging.info(
+        start_msg = truncate_log_message(
             f"Starting processing of {len(df)} records in {total_batches} batches (batch size: {DATA_BATCH_SIZE})"
         )
+        logging.info(start_msg)
 
         # Process batches
         for batch_num in range(1, total_batches + 1):

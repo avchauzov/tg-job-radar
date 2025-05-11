@@ -22,7 +22,7 @@ from openai.types.chat import (
     ChatCompletionSystemMessageParam,
     ChatCompletionUserMessageParam,
 )
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from _production import (
     CV_COMPRESSION_RATIO,
@@ -147,13 +147,30 @@ def _make_llm_call(
                 else:
                     content = f'{{"is_job_post": {bool_value}}}'
 
-            # Parse the response into the requested model
+            # Try to parse and validate the response
             try:
-                result = response_format.model_validate_json(content)
+                # For DetailedMatchScore, allow auto-correction of total_score
+                if response_format.__name__ == "DetailedMatchScore":
+                    response_dict = json.loads(content)
+                    # Calculate the sum of individual scores
+                    total = (
+                        response_dict.get("job_title_match", 0)
+                        + response_dict.get("experience_match", 0)
+                        + response_dict.get("hard_skills_match", 0)
+                        + response_dict.get("soft_skills_match", 0)
+                        + response_dict.get("location_match", 0)
+                    )
+                    if response_dict.get("total_score") != total:
+                        logging.warning(
+                            f"LLM returned mismatched total_score ({response_dict.get('total_score')}) vs sum ({total}). Auto-correcting."
+                        )
+                        response_dict["total_score"] = total
+                    result = response_format.model_validate(response_dict)
+                else:
+                    result = response_format.model_validate_json(content)
             except Exception as e:
                 # If validation fails, try to fix common JSON formatting issues
                 if "true" in content.lower() or "false" in content.lower():
-                    # Replace Python boolean literals with JSON boolean literals
                     content = content.replace("True", "true").replace("False", "false")
                     result = response_format.model_validate_json(content)
                 else:
@@ -714,6 +731,122 @@ def clean_job_post_values(
         return fallback
 
 
+class DetailedMatchScore(BaseModel):
+    """Detailed match scores for CV-to-job matching."""
+
+    job_title_match: int = Field(
+        ..., ge=0, le=20, description="Match score for job title (0-20)"
+    )
+    experience_match: int = Field(
+        ..., ge=0, le=25, description="Match score for experience (0-25)"
+    )
+    hard_skills_match: int = Field(
+        ..., ge=0, le=25, description="Match score for hard skills (0-25)"
+    )
+    soft_skills_match: int = Field(
+        ..., ge=0, le=15, description="Match score for soft skills (0-15)"
+    )
+    location_match: int = Field(
+        ..., ge=0, le=15, description="Match score for location (0-15)"
+    )
+    total_score: int = Field(..., ge=0, le=100, description="Total match score (0-100)")
+
+    def model_post_init(self, __context: Any) -> None:
+        """Validate that total_score matches the sum of individual scores."""
+        expected_total = (
+            self.job_title_match
+            + self.experience_match
+            + self.hard_skills_match
+            + self.soft_skills_match
+            + self.location_match
+        )
+        if self.total_score != expected_total:
+            raise ValueError(
+                f"Total score {self.total_score} does not match sum of individual scores {expected_total}"
+            )
+
+
+def detailed_match_cv_with_job(
+    cv_text: str, post: str, max_retries: int = 5, sleep_time: int = 10
+) -> DetailedMatchScore | None:
+    """Evaluates detailed match between CV and job post using specific criteria.
+
+    Args:
+        cv_text: The candidate's CV text
+        post: The job posting text
+        max_retries: Maximum number of retry attempts
+        sleep_time: Initial sleep time between retries
+
+    Returns:
+        DetailedMatchScore | None: Detailed matching scores and analysis or None if evaluation fails
+    """
+    start_time = time.time()
+
+    try:
+        validate_text_input(cv_text, "CV text")
+        validate_text_input(post, "Job post")
+
+        max_input_length = 32000
+        cv_text = cv_text[:max_input_length]
+        post = post[:max_input_length]
+
+        messages = [
+            {
+                "role": "system",
+                "content": CV_JOB_MATCHING_PROMPT,
+            },
+            {
+                "role": "user",
+                "content": f"""
+                CV:
+                {cv_text}
+
+                Job Post:
+                {post}
+
+                Provide your response in the exact JSON format specified in the system prompt.
+                """,
+            },
+        ]
+
+        result = _make_llm_call(
+            messages,
+            DetailedMatchScore,
+            max_retries,
+            sleep_time,
+            max_tokens=512,  # Increased for detailed analysis
+            temperature=0.0,
+        )
+
+        if result:
+            # Log the detailed scores
+            logging.info(
+                f"Detailed Match Scores:\n"
+                f"  Job Title: {result.job_title_match}/20\n"
+                f"  Experience: {result.experience_match}/25\n"
+                f"  Hard Skills: {result.hard_skills_match}/25\n"
+                f"  Soft Skills: {result.soft_skills_match}/15\n"
+                f"  Location: {result.location_match}/15\n"
+                f"  Total: {result.total_score}/100"
+            )
+
+            processing_time = time.time() - start_time
+            logging.info(
+                f"Detailed CV matching completed in {processing_time:.2f}s with total score: {result.total_score}"
+            )
+            return result
+
+        return None
+
+    except Exception as error:
+        processing_time = time.time() - start_time
+        logging.error(
+            f"Error during detailed CV matching in {processing_time:.2f}s: {error!s}",
+            exc_info=True,
+        )
+        return None
+
+
 if __name__ == "__main__":
     # Configure logging for testing
     logging.basicConfig(
@@ -832,5 +965,21 @@ if __name__ == "__main__":
         print(rewritten if rewritten else "Failed to rewrite job post")
     except Exception as error:
         print(f"Error in rewrite_job_post: {error!s}")
+
+    print("\n=== Testing detailed_match_cv_with_job ===")
+    try:
+        detailed_match = detailed_match_cv_with_job(sample_cv, sample_job_post)
+        print("Detailed CV match:")
+        if detailed_match:
+            print(f"Job Title Match: {detailed_match.job_title_match}/20")
+            print(f"Experience Match: {detailed_match.experience_match}/25")
+            print(f"Hard Skills Match: {detailed_match.hard_skills_match}/25")
+            print(f"Soft Skills Match: {detailed_match.soft_skills_match}/15")
+            print(f"Location Match: {detailed_match.location_match}/15")
+            print(f"Total Score: {detailed_match.total_score}/100")
+        else:
+            print("Failed to get detailed match result")
+    except Exception as error:
+        print(f"Error in detailed_match_cv_with_job: {error!s}")
 
     print("\nAll tests completed!")
